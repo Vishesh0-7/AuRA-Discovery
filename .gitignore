@@ -105,7 +105,7 @@ temp/
 *.tmp
 *.bak
 *.swp
-
+*.pptx
 # OS
 Thumbs.db
 .DS_Store
