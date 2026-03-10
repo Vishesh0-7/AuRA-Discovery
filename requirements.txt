@@ -1,0 +1,29 @@
+# Core Dependencies for Aura Discovery
+# Generated from pyproject.toml
+# Install with: pip install -r requirements.txt
+
+# LangGraph and LangChain for agentic workflows
+langgraph>=0.2.0
+langchain-google-genai>=2.0.0
+langchain-core>=0.3.0
+
+# Google Gemini AI
+google-genai>=0.3.0
+google-generativeai>=0.8.0
+
+# Neo4j Graph Database
+neo4j>=5.18.0,<6.0.0
+
+# Data validation and configuration
+pydantic>=2.6.0,<3.0.0
+pydantic-settings>=2.0.0
+python-dotenv>=1.0.1
+
+# HTTP requests
+requests>=2.31.0
+
+# Additional langchain dependencies
+langchain>=0.3.0
+
+# ChEMBL database access
+chembl_webresource_client

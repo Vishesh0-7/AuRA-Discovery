@@ -1,0 +1,112 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+*.env
+
+# Data directory - contains raw and processed data
+data/
+*.csv
+*.json
+*.parquet
+*.db
+*.sqlite
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+.venv
+venv/
+ENV/
+env/
+.virtualenv
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+.pyre/
+
+# Documentation
+docs/_build/
+site/
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Cache
+.cache/
+.ruff_cache/
+
+# UV package manager
+.uv/
+uv.lock
+
+# Pip and lock files
+pip-wheel-metadata/
+Pipfile.lock
+poetry.lock
+pdm.lock
+
+# Neo4j
+neo4j/
+*.neo4j
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.swp
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini

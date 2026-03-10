@@ -1,0 +1,17 @@
+# Development Dependencies for Aura Discovery
+# Install with: pip install -r requirements-dev.txt
+
+# Include core dependencies
+-r requirements.txt
+
+# Testing
+pytest>=8.0.0
+
+# Code formatting
+black>=24.0.0
+
+# Linting
+ruff>=0.3.0
+
+# Type checking
+mypy>=1.8.0
