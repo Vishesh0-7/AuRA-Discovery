@@ -1,0 +1,165 @@
+\documentclass[conference]{Template/IEEEtran}
+\IEEEoverridecommandlockouts
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+
+\begin{document}
+
+\title{AuRA-Discovery: An Agentic Graph-RAG Pipeline for Biomedical Drug Interaction Knowledge Discovery}
+
+\author{\IEEEauthorblockN{Judith Ria}
+\IEEEauthorblockA{\textit{AuRA-Discovery Project}\\
+March 2026}}
+
+\maketitle
+
+\begin{abstract}
+Biomedical literature is growing at a rate that makes manual curation of drug-drug interaction (DDI) evidence increasingly difficult. This paper presents Technical Draft \#1 of AuRA-Discovery, an agentic Graph-RAG system that ingests pharmacology papers from PubMed, extracts DDI claims with a structured large language model (LLM), validates extracted entities against ChEMBL, and stores validated and potentially novel relationships in Neo4j for downstream retrieval and analysis. The proposed pipeline combines deterministic graph storage with probabilistic language-model extraction, using a workflow state machine to separate extraction, validation, conflict marking, and graph update decisions. A focused review of current biomedical knowledge graph, BioNLP, GraphRAG, and biomedical database literature motivates the design choices. The methodology emphasizes practical deployment constraints, including API rate limits, partial failure handling, and status-based paper processing. AuRA-Discovery is positioned as a reproducible foundation for literature-driven pharmacovigilance and hypothesis generation, particularly in settings where both known interactions and potential discoveries must be surfaced with traceable evidence.
+\end{abstract}
+
+\begin{IEEEkeywords}
+biomedical knowledge graph, drug-drug interaction, Graph-RAG, large language model, Neo4j, ChEMBL, PubMed, pharmacovigilance
+\end{IEEEkeywords}
+
+\section{Introduction}
+The biomedical domain now faces a dual bottleneck: an abundance of textual evidence and a shortage of scalable, trustworthy curation pipelines. For drug safety and pharmacology, the problem is acute because clinically meaningful DDIs can be dispersed across heterogeneous publications, represented with non-uniform terminology, and updated faster than manual review cycles. Conventional retrieval systems can find documents, but they often leave analysts with the final burden of extracting, normalizing, and validating interaction claims. Conversely, purely generative systems can summarize large corpora, but they may introduce hallucinations or lose provenance when claims are not directly tied to source evidence.
+
+Knowledge graphs (KGs) provide a strong structural layer for biomedical integration by explicitly modeling entities, relationships, and provenance in a queryable form \cite{hansel2023kg,lu2025bkgsurvey}. Meanwhile, recent graph-enhanced retrieval paradigms such as GraphRAG indicate that graph structure can improve global reasoning and corpus-level synthesis \cite{edge2024graphrag,peng2025graphragsurvey}. In pharmacology, high-value resources like ChEMBL and DrugBank already provide curated molecular and interaction knowledge \cite{zdravil2024chembl,wishart2018drugbank}, while tools like PubTator 3.0 demonstrate large-scale automated biomedical annotation infrastructure \cite{wei2024pubtator}. The challenge is not a lack of data; it is designing robust orchestration that links extraction, validation, and storage with transparent decision logic.
+
+AuRA-Discovery addresses this by combining four principles. First, acquisition should be automated but scoped to domain-relevant queries over PubMed. Second, extraction should be structured, conservative, and evidence-aware. Third, validation should leverage authoritative pharmacology resources to distinguish known entities from unknown or potentially novel findings. Fourth, graph updates should preserve validation metadata so downstream users can filter by confidence, novelty, and review priority.
+
+This draft presents the first technical write-up of the system, with contributions as follows: (1) an end-to-end agentic pipeline for DDI knowledge acquisition and validation, (2) an implementation-oriented methodology using LangGraph, Gemini, ChEMBL, and Neo4j, and (3) an integrated literature review framing the system at the intersection of biomedical KGs, BioNLP, and graph-enhanced retrieval. The paper is structured into a literature review, project methodology, and a complete reference section derived from the project's source corpus.
+
+\section{Literature Review}
+\subsection{Biomedical Knowledge Graph Foundations}
+Biomedical KGs have evolved from narrowly scoped curated resources to broad multimodal infrastructures for translational research. Hansel \textit{et al.} describe the promise and integration challenges of clinical and biomedical graph models, especially for real-world data alignment and standardized representation \cite{hansel2023kg}. A recent survey by Lu \textit{et al.} further systematizes BKG research across domains, tasks, and applications, emphasizing construction pipelines, retrieval, reasoning, and interpretability as core dimensions \cite{lu2025bkgsurvey}. These studies suggest that practical systems must support both ontology-level organization and workflow-level operations.
+
+PrimeKG demonstrates the scale and utility of multimodal disease-centered graphs, integrating millions of relationships for precision medicine use cases \cite{chandak2023primekg}. At a more workflow-specific level, BioKGrapher evaluates automated KG construction from biomedical literature, highlighting the feasibility and current limits of extraction-driven graph assembly \cite{schafer2024biokgrapher}. Together, these works justify AuRA-Discovery's strategy: maintain a graph-native representation while preserving direct links to literature evidence and external knowledge sources.
+
+\subsection{Drug Databases and Validation Infrastructure}
+Any DDI extraction system requires a strong validation backbone. ChEMBL remains a cornerstone open bioactivity platform with broad data types and historical depth, making it valuable for checking whether extracted chemical entities are known and therapeutically characterized \cite{zdravil2024chembl}. DrugBank offers complementary breadth on mechanisms, interactions, and drug metadata and has continuously expanded in scope \cite{wishart2018drugbank}. In automated pipelines, these resources are not simply lookup tables; they define prior knowledge boundaries that separate confirmed claims from speculative or newly observed links.
+
+PubTator 3.0 extends this infrastructure by providing AI-powered large-scale biomedical entity and relation annotations, including semantic search capabilities across tens of millions of abstracts and full-text articles \cite{wei2024pubtator}. For AuRA-Discovery, this reinforces the design need for scalable pre-processing and robust entity normalization strategies.
+
+\subsection{BioNLP and Relation Extraction Trends}
+Relation extraction for DDIs has progressed from traditional machine learning to transformer-based and LLM-assisted pipelines. BioGPT demonstrates strong generative and extraction performance in biomedical tasks and illustrates the value of domain-adapted pretraining for text mining \cite{luo2022biogpt}. Machado \textit{et al.} provide an applied DDI extraction architecture that transforms unstructured clinical text into structured interaction data, emphasizing clinical decision support relevance \cite{machado2023ddi}. More recent high-throughput approaches use LLMs plus retrieval chunks for scalable relation extraction from semi-structured biomedical web content \cite{zhou2024highthroughput}.
+
+However, benchmark evidence indicates tradeoffs. Chen \textit{et al.} show that while frontier LLMs can excel in reasoning-centric tasks, traditional fine-tuning can outperform zero/few-shot prompting for many BioNLP tasks; hallucinations and omissions remain persistent risks \cite{chen2025benchmark}. This motivates AuRA-Discovery's conservative extraction prompt design and post-extraction validation stage rather than relying on generation alone.
+
+\subsection{GraphRAG and Corpus-Level Reasoning}
+GraphRAG methods attempt to overcome limitations of chunk-level retrieval by building entity-centric graph indexes and community-level summaries. Edge \textit{et al.} show advantages on global, query-focused summarization where standard RAG pipelines struggle \cite{edge2024graphrag}. Two recent surveys synthesize architectures and challenges of graph-enhanced generation, including retriever-generator coupling, graph construction overhead, and domain adaptation issues \cite{han2025graphrag,peng2025graphragsurvey}.
+
+For biomedical discovery systems, GraphRAG is especially relevant because meaning is highly relational: drugs, targets, pathways, diseases, and adverse events interact in graph-like patterns. AuRA-Discovery adopts this perspective operationally by storing extracted interactions as first-class graph relationships with provenance and validation properties.
+
+\subsection{DDI Prediction and Knowledge Subgraphs}
+Beyond extraction, DDI research increasingly leverages subgraph structure. SubGE-DDI demonstrates that subgraph-enhanced prediction can improve DDI classification under weak annotation conditions by integrating large drug knowledge resources \cite{shi2024subgeddi}. This supports AuRA-Discovery's architecture choice to treat extracted text relations not as terminal outputs, but as graph artifacts that can feed later predictive modules, curation workflows, or recommendation pipelines.
+
+\section{Methodology}
+\subsection{System Overview}
+AuRA-Discovery is implemented as a two-phase pipeline: (1) literature ingestion and (2) agentic extraction-validation-update. The system codebase centers on \texttt{ingest\_research.py}, \texttt{process\_with\_validation.py}, and modular components in \texttt{src/agents}, \texttt{src/tools}, and \texttt{src/database}. Neo4j serves as the persistent graph store; PubMed is the upstream literature source; Gemini is used for structured extraction; and ChEMBL is used for drug validation.
+
+The core design pattern is stateful orchestration. Instead of invoking extraction and storage as one monolithic function, the workflow decomposes into explicit nodes: \texttt{extract}, \texttt{validate}, \texttt{flag\_conflict}, \texttt{mark\_discovery}, and \texttt{update\_graph}. Conditional routing determines which path a paper follows based on validation outcomes.
+
+\subsection{Phase 1: Literature Ingestion from PubMed}
+Ingestion begins with a domain-specific PubMed query targeting DDI-relevant pharmacology abstracts. The PubMed client performs \texttt{esearch} to collect PMIDs and \texttt{efetch} to retrieve XML metadata, including title, abstract, authors, publication date, journal, DOI (or PMID fallback), and MeSH terms. Network retry logic and conservative rate limits are integrated in API wrappers to improve robustness.
+
+Each valid paper is upserted into Neo4j as a \texttt{:Paper} node (with an additional \texttt{:Pharmacology} label), and each author is represented as a \texttt{:Author} node linked through \texttt{:WROTE}. Newly ingested papers are marked \texttt{status='unprocessed'} to support deterministic downstream scheduling. This explicit status flag prevents duplicate processing and enables incremental operation across multiple runs.
+
+\subsection{Phase 2: Agentic Extraction and Validation}
+The validation pipeline retrieves unprocessed papers and processes them sequentially under rate constraints. For each paper, the Discovery Agent initializes workflow state containing paper metadata, abstract text, and empty result collections.
+
+\textbf{Extraction node:} The extraction step uses a structured LLM call with a Pydantic schema (\texttt{ExtractionResult}) containing interaction tuples \((drug\_a, drug\_b, interaction\_type, evidence\_text, confidence)\). Prompt instructions explicitly forbid speculative inference and request only directly stated interactions. This conservative prompt posture is intended to reduce false positives and improve downstream validation efficiency.
+
+\textbf{Validation node:} Extracted interactions are batch-normalized against ChEMBL. The validator deduplicates drug names, performs cached batch lookup, and falls back to individual lookup if needed. For each interaction, the pipeline computes key state variables: \texttt{both\_known}, \texttt{potential\_discovery}, \texttt{conflict\_detected}, and \texttt{validation\_status}. Current conflict logic is intentionally cautious: true contradiction flags are limited, while uncertain cases are kept reviewable rather than force-classified.
+
+\textbf{Conditional routing:} Validation outcomes drive route selection. Interactions with conflict markers go through a conflict-labeling node (e.g., \texttt{needs\_review=true}); interactions involving unknown entities can be marked as potential discoveries (e.g., \texttt{requires\_validation=true}); fully known interactions proceed directly to graph update.
+
+\subsection{Graph Persistence and Metadata Model}
+The graph update node upserts \texttt{:Drug} nodes and \texttt{:INTERACTS\_WITH} relationships keyed by drug pair and source DOI. Relationship properties include: interaction type, evidence text, validation status, ChEMBL validation booleans, conflict/discovery flags, and review indicators. By storing this metadata at edge level, the system supports query-time filtering such as:
+
+\begin{itemize}
+\item validated interactions only,
+\item potential discoveries requiring human follow-up,
+\item interactions flagged for conflict review,
+\item per-paper provenance tracing by DOI.
+\end{itemize}
+
+This design allows the graph to function both as a knowledge base and as an operational queue for curation decisions.
+
+\subsection{Operational Considerations}
+Three practical constraints shaped implementation. First, external API rate limits are respected through deliberate delays and retry policies to avoid brittle runs. Second, partial-failure tolerance is built into validation and graph writes, where failed interactions are logged but do not terminate the full paper workflow. Third, status updates (e.g., \texttt{processed}) are only committed after successful workflow completion, minimizing silent data loss and repeat processing.
+
+\subsection{Methodological Strengths and Current Limits}
+The methodology's main strength is its hybrid architecture: symbolic graph persistence combined with LLM-based extraction and database-grounded validation. This improves traceability compared with pure-text summarization pipelines. Another strength is explicit workflow routing, which makes system behavior auditable and easier to evolve.
+
+Current limitations include simplified conflict heuristics and dependence on abstract-level evidence (not full-text context). Entity normalization also remains sensitive to naming variants. These limitations are acceptable for Draft \#1 and identify clear next directions: stronger ontology alignment, richer contradiction logic, and expanded retrieval over full-text evidence.
+
+\section*{References}
+\begin{thebibliography}{99}
+
+\bibitem{hansel2023kg}
+K. Hansel, S. N. Dudgeon, K.-H. Cheung, T. J. S. Durant, and W. L. Schulz,
+"From Data to Wisdom: Biomedical Knowledge Graphs for Real-World Data Insights," \textit{Journal of Medical Systems}, vol. 47, 2023.
+
+\bibitem{edge2024graphrag}
+D. Edge \textit{et al.},
+"From Local to Global: A GraphRAG Approach to Query-Focused Summarization," arXiv:2404.16130, 2024.
+
+\bibitem{han2025graphrag}
+H. Han \textit{et al.},
+"Retrieval-Augmented Generation with Graphs (GraphRAG)," arXiv:2501.00309, 2025.
+
+\bibitem{lu2025bkgsurvey}
+Y. Lu, S. Y. Goi, X. Zhao, and J. Wang,
+"Biomedical Knowledge Graph: A Survey of Domains, Tasks, and Real-World Applications," arXiv:2501.11632, 2025.
+
+\bibitem{peng2025graphragsurvey}
+B. Peng \textit{et al.},
+"Graph Retrieval-Augmented Generation: A Survey," \textit{ACM Transactions on Information Systems}, vol. 44, no. 2, 2026.
+
+\bibitem{luo2022biogpt}
+R. Luo \textit{et al.},
+"BioGPT: Generative Pre-trained Transformer for Biomedical Text Generation and Mining," \textit{Briefings in Bioinformatics}, 2022.
+
+\bibitem{machado2023ddi}
+J. Machado, C. Rodrigues, R. Sousa, and L. M. Gomes,
+"Drug-drug interaction extraction-based system: A natural language processing approach," \textit{Expert Systems}, 2023.
+
+\bibitem{zdravil2024chembl}
+B. Zdrazil \textit{et al.},
+"The ChEMBL Database in 2023: a drug discovery platform spanning multiple bioactivity data types and time periods," \textit{Nucleic Acids Research}, vol. 52, 2024.
+
+\bibitem{wei2024pubtator}
+C.-H. Wei \textit{et al.},
+"PubTator 3.0: an AI-powered literature resource for unlocking biomedical knowledge," \textit{Nucleic Acids Research}, vol. 52, 2024.
+
+\bibitem{wishart2018drugbank}
+D. S. Wishart \textit{et al.},
+"DrugBank 5.0: a major update to the DrugBank database for 2018," \textit{Nucleic Acids Research}, vol. 46, 2018.
+
+\bibitem{zhou2024highthroughput}
+S. Zhou and S. Yu,
+"High-throughput Biomedical Relation Extraction for Semi-Structured Web Articles Empowered by Large Language Models," 2024.
+
+\bibitem{shi2024subgeddi}
+Y. Shi \textit{et al.},
+"SubGE-DDI: A new prediction model for drug-drug interaction established through biomedical texts and drug-pairs knowledge subgraph enhancement," \textit{PLOS Computational Biology}, 2024.
+
+\bibitem{chen2025benchmark}
+Q. Chen \textit{et al.},
+"Benchmarking large language models for biomedical natural language processing applications and recommendations," \textit{Nature Communications}, 2025.
+
+\bibitem{chandak2023primekg}
+P. Chandak, K. Huang, and M. Zitnik,
+"Building a knowledge graph to enable precision medicine," \textit{Scientific Data}, vol. 10, 2023.
+
+\bibitem{schafer2024biokgrapher}
+H. Schafer \textit{et al.},
+"BioKGrapher: Initial evaluation of automated knowledge graph construction from biomedical literature," \textit{Computational and Structural Biotechnology Journal}, vol. 24, 2024.
+
+\end{thebibliography}
+
+\end{document}
