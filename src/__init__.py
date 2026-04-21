@@ -1,7 +1,7 @@
 """
 Aura Discovery - Agentic Graph-RAG System
 
-A biomedical discovery platform using Google Gemini and LangGraph
+A biomedical discovery platform using Ollama and LangGraph
 for intelligent knowledge graph construction and querying.
 """
 

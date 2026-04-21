@@ -1,13 +1,12 @@
 """
 Drug Interaction Extractor Agent
 
-This module uses Google Gemini 1.5 Pro with structured output to extract
+This module uses Ollama with structured output to extract
 drug-drug interactions from biomedical literature abstracts.
 """
 
 import logging
 from typing import Optional
-from langchain_google_genai import ChatGoogleGenerativeAI
 
 from src.schema import ExtractionResult
 from src.factory import get_structured_llm
@@ -46,20 +45,20 @@ Extract all drug-drug interactions from this abstract. Be precise and conservati
 
 def extract_interactions(
     text: str,
-    model_name: str = "gemini-2.5-flash",
+    model_name: str = "llama3.1:8b",
     temperature: float = 0.3,
     source_doi: Optional[str] = None
 ) -> ExtractionResult:
     """
-    Extract drug interactions from text using Gemini with structured output.
+    Extract drug interactions from text using Ollama with structured output.
     
-    This function uses LangChain's ChatGoogleGenerativeAI with the 
+    This function uses LangChain's ChatOllama with the
     .with_structured_output() method to ensure the response matches
     the ExtractionResult Pydantic schema.
     
     Args:
         text: The text to analyze (typically a paper abstract)
-        model_name: Gemini model to use (default: gemini-2.5-flash)
+        model_name: Ollama model to use (default: llama3.1:8b)
         temperature: Sampling temperature (lower = more focused, default: 0.3)
         source_doi: Optional DOI of the source paper for tracking
     
@@ -91,11 +90,10 @@ def extract_interactions(
         logger.info(f"Source DOI: {source_doi}")
     
     try:
-        # Get Gemini model configured for structured output
-        llm = ChatGoogleGenerativeAI(
-            model=model_name,
+        # Get Ollama model configured for structured output
+        llm = get_structured_llm(
+            model_name=model_name,
             temperature=temperature,
-            max_output_tokens=4096
         )
         
         # Configure for structured output using Pydantic schema
@@ -105,7 +103,7 @@ def extract_interactions(
         prompt = EXTRACTION_PROMPT.format(abstract=text)
         
         # Invoke the model
-        logger.debug("Calling Gemini API for structured extraction...")
+        logger.debug("Calling Ollama for structured extraction...")
         result = structured_llm.invoke(prompt)
         
         # Add source DOI if provided
@@ -139,7 +137,7 @@ def extract_interactions(
 def extract_interactions_batch(
     texts: list[str],
     source_dois: Optional[list[str]] = None,
-    model_name: str = "gemini-2.5-flash"
+    model_name: str = "llama3.1:8b"
 ) -> list[ExtractionResult]:
     """
     Extract interactions from multiple texts in batch.

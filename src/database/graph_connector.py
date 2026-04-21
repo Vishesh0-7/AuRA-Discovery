@@ -406,6 +406,86 @@ class ResearchGraph:
                 "message": f"{error_msg}: {str(e)}",
                 "error_type": type(e).__name__
             }
+
+    def batch_upsert_papers(self, papers: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Insert or update multiple research papers in a single transaction.
+
+        Args:
+            papers: List of paper dictionaries compatible with upsert_paper()
+
+        Returns:
+            Dictionary with batch results including counts and failures
+        """
+        if not papers:
+            return {
+                "success": True,
+                "processed": 0,
+                "failed": 0,
+                "message": "No papers to upsert"
+            }
+
+        query = """
+        UNWIND $papers AS paper_data
+        WITH paper_data
+        WHERE paper_data.doi IS NOT NULL AND paper_data.title IS NOT NULL
+        MERGE (p:Paper:Pharmacology {doi: paper_data.doi})
+        SET p.title = paper_data.title,
+            p.abstract = COALESCE(paper_data.abstract, ''),
+            p.category = COALESCE(paper_data.category, ''),
+            p.date = COALESCE(paper_data.date, ''),
+            p.url = COALESCE(paper_data.url, ''),
+            p.status = 'unprocessed',
+            p.updated_at = datetime()
+        WITH p, paper_data
+        FOREACH (author_name IN COALESCE(paper_data.authors, []) |
+            MERGE (a:Author {name: author_name})
+            MERGE (a)-[:WROTE]->(p)
+        )
+        RETURN count(DISTINCT p) AS papers_upserted
+        """
+
+        valid_papers = []
+        skipped = []
+        for paper in papers:
+            if not paper.get("doi") or not paper.get("title"):
+                skipped.append(paper.get("doi") or paper.get("title") or "unknown")
+                continue
+            valid_papers.append(paper)
+
+        try:
+            with self.driver.session() as session:
+                result = session.run(query, {"papers": valid_papers})
+                record = result.single()
+
+                if record:
+                    processed = int(record["papers_upserted"] or 0)
+                    logger.info("Batch upserted %d papers", processed)
+                    return {
+                        "success": True,
+                        "processed": processed,
+                        "failed": len(skipped),
+                        "skipped": skipped,
+                        "message": "Batch paper upsert completed successfully"
+                    }
+
+                return {
+                    "success": False,
+                    "processed": 0,
+                    "failed": len(skipped),
+                    "skipped": skipped,
+                    "message": "No result returned from batch paper upsert"
+                }
+
+        except Exception as e:
+            logger.error("Batch paper upsert failed: %s", e, exc_info=True)
+            return {
+                "success": False,
+                "processed": 0,
+                "failed": len(skipped) + len(valid_papers),
+                "skipped": skipped,
+                "message": f"Batch paper upsert failed: {str(e)}"
+            }
     
     def get_unprocessed_papers(self, limit: int = 10) -> List[Dict[str, Any]]:
         """
@@ -507,12 +587,19 @@ class ResearchGraph:
             Dictionary with counts of papers, authors, and relationships
         """
         query = """
-        MATCH (p:Paper)
-        OPTIONAL MATCH (a:Author)
-        OPTIONAL MATCH ()-[w:WROTE]->()
-        RETURN count(DISTINCT p) AS paper_count,
-               count(DISTINCT a) AS author_count,
-               count(w) AS wrote_relationship_count
+        CALL {
+            MATCH (p:Paper)
+            RETURN count(p) AS paper_count
+        }
+        CALL {
+            MATCH (a:Author)
+            RETURN count(a) AS author_count
+        }
+        CALL {
+            MATCH ()-[w:WROTE]->()
+            RETURN count(w) AS wrote_relationship_count
+        }
+        RETURN paper_count, author_count, wrote_relationship_count
         """
         
         try:
@@ -669,6 +756,100 @@ class ResearchGraph:
                 "success": False,
                 "message": f"Error: {str(e)}"
             }
+
+    def batch_upsert_drug_interactions(self, interactions: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Create or update multiple drug interactions in a single transaction.
+
+        Args:
+            interactions: List of interaction dictionaries compatible with upsert_drug_interaction()
+
+        Returns:
+            Dictionary with batch results including counts and failures
+        """
+        if not interactions:
+            return {
+                "success": True,
+                "processed": 0,
+                "failed": 0,
+                "message": "No interactions to upsert"
+            }
+
+        query = """
+        UNWIND $interactions AS interaction
+        WITH interaction
+        WHERE interaction.drug_a IS NOT NULL AND interaction.drug_b IS NOT NULL AND interaction.source_doi IS NOT NULL
+        MERGE (d1:Drug {name: interaction.drug_a})
+        ON CREATE SET d1.chembl_validated = COALESCE(interaction.drug_a_validated, false)
+        ON MATCH SET d1.chembl_validated = COALESCE(d1.chembl_validated, COALESCE(interaction.drug_a_validated, false))
+
+        MERGE (d2:Drug {name: interaction.drug_b})
+        ON CREATE SET d2.chembl_validated = COALESCE(interaction.drug_b_validated, false)
+        ON MATCH SET d2.chembl_validated = COALESCE(d2.chembl_validated, COALESCE(interaction.drug_b_validated, false))
+
+        MERGE (d1)-[i:INTERACTS_WITH {
+            drug_a: interaction.drug_a,
+            drug_b: interaction.drug_b,
+            source_doi: interaction.source_doi
+        }]-(d2)
+
+        SET i.interaction_type = interaction.interaction_type,
+            i.evidence_text = interaction.evidence_text,
+            i.confidence = interaction.confidence,
+            i.validation_status = interaction.validation_status,
+            i.chembl_validated = COALESCE(interaction.chembl_validated, false),
+            i.conflict_detected = COALESCE(interaction.conflict_detected, false),
+            i.potential_discovery = COALESCE(interaction.potential_discovery, false),
+            i.needs_review = COALESCE(interaction.needs_review, false),
+            i.requires_validation = COALESCE(interaction.requires_validation, false),
+            i.updated_at = datetime()
+
+        RETURN count(DISTINCT i) AS interactions_upserted
+        """
+
+        valid_interactions = []
+        skipped = []
+        for interaction in interactions:
+            if not interaction.get("drug_a") or not interaction.get("drug_b") or not interaction.get("source_doi"):
+                skipped.append(
+                    f"{interaction.get('drug_a', 'unknown')} <-> {interaction.get('drug_b', 'unknown')}"
+                )
+                continue
+            valid_interactions.append(interaction)
+
+        try:
+            with self.driver.session() as session:
+                result = session.run(query, {"interactions": valid_interactions})
+                record = result.single()
+
+                if record:
+                    processed = int(record["interactions_upserted"] or 0)
+                    logger.info("Batch upserted %d interactions", processed)
+                    return {
+                        "success": True,
+                        "processed": processed,
+                        "failed": len(skipped),
+                        "skipped": skipped,
+                        "message": "Batch interaction upsert completed successfully"
+                    }
+
+                return {
+                    "success": False,
+                    "processed": 0,
+                    "failed": len(skipped),
+                    "skipped": skipped,
+                    "message": "No result returned from batch interaction upsert"
+                }
+
+        except Exception as e:
+            logger.error("Batch interaction upsert failed: %s", e, exc_info=True)
+            return {
+                "success": False,
+                "processed": 0,
+                "failed": len(skipped) + len(valid_interactions),
+                "skipped": skipped,
+                "message": f"Batch interaction upsert failed: {str(e)}"
+            }
     
     def get_drug_statistics(self) -> Dict[str, Any]:
         """
@@ -678,10 +859,15 @@ class ResearchGraph:
             Dictionary with drug and interaction counts
         """
         query = """
-        MATCH (d:Drug)
-        OPTIONAL MATCH ()-[i:INTERACTS_WITH]-()
-        RETURN count(DISTINCT d) AS drug_count,
-               count(DISTINCT i) AS interaction_count
+        CALL {
+            MATCH (d:Drug)
+            RETURN count(d) AS drug_count
+        }
+        CALL {
+            MATCH ()-[i:INTERACTS_WITH]-()
+            RETURN count(i) AS interaction_count
+        }
+        RETURN drug_count, interaction_count
         """
         
         try:
@@ -705,16 +891,27 @@ class ResearchGraph:
             Dictionary with all counts (papers, authors, drugs, interactions)
         """
         query = """
-        MATCH (p:Paper)
-        OPTIONAL MATCH (a:Author)
-        OPTIONAL MATCH (d:Drug)
-        OPTIONAL MATCH ()-[w:WROTE]->()
-        OPTIONAL MATCH ()-[i:INTERACTS_WITH]-()
-        RETURN count(DISTINCT p) AS paper_count,
-               count(DISTINCT a) AS author_count,
-               count(DISTINCT d) AS drug_count,
-               count(w) AS wrote_count,
-               count(DISTINCT i) AS interaction_count
+        CALL {
+            MATCH (p:Paper)
+            RETURN count(p) AS paper_count
+        }
+        CALL {
+            MATCH (a:Author)
+            RETURN count(a) AS author_count
+        }
+        CALL {
+            MATCH (d:Drug)
+            RETURN count(d) AS drug_count
+        }
+        CALL {
+            MATCH ()-[w:WROTE]->()
+            RETURN count(w) AS wrote_count
+        }
+        CALL {
+            MATCH ()-[i:INTERACTS_WITH]-()
+            RETURN count(i) AS interaction_count
+        }
+        RETURN paper_count, author_count, drug_count, wrote_count, interaction_count
         """
         
         try:

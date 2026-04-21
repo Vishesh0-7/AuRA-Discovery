@@ -5,6 +5,7 @@ Functions for searching and retrieving papers from PubMed using NCBI E-utilities
 """
 
 import logging
+import os
 import requests
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
@@ -411,7 +412,8 @@ def search_pubmed(query: str, max_results: int = 50) -> List[Dict[str, Any]]:
 
 def get_latest_papers(
     query: str = "drug interaction[MeSH Terms] AND pharmacology[MeSH Terms]",
-    count: int = 50
+    count: int = 50,
+    years_back: Optional[int] = None
 ) -> List[Dict[str, Any]]:
     """
     Fetch the latest papers from PubMed for drug interaction research.
@@ -427,6 +429,9 @@ def get_latest_papers(
                - "drug interaction AND pharmacology"
                - "cytochrome P450 AND drug metabolism"
         count: Maximum number of papers to return (default: 50)
+         years_back: How many years of PubMed history to search.
+                  If None, uses PUBMED_YEARS_BACK env var (default: 20).
+                  Set to 0 or a negative value to disable date filtering.
     
     Returns:
         List of dictionaries, each containing:
@@ -452,17 +457,35 @@ def get_latest_papers(
     logger.info(f"Query: {query}")
     
     client = PubMedClient()
-    
-    # Fetch recent papers (last 2 years for better relevance)
-    end_date = datetime.now().strftime("%Y/%m/%d")
-    start_date = (datetime.now() - timedelta(days=730)).strftime("%Y/%m/%d")
-    
-    papers = client.search_and_fetch(
-        query=query,
-        max_results=count,
-        start_date=start_date,
-        end_date=end_date
-    )
+
+    # Allow configurable historical backfill depth via env var.
+    if years_back is None:
+        raw_years_back = os.getenv("PUBMED_YEARS_BACK", "20")
+        try:
+            years_back = int(raw_years_back)
+        except ValueError:
+            logger.warning(
+                "Invalid PUBMED_YEARS_BACK='%s'; falling back to 20",
+                raw_years_back,
+            )
+            years_back = 20
+
+    if years_back > 0:
+        end_date = datetime.now().strftime("%Y/%m/%d")
+        start_date = (datetime.now() - timedelta(days=365 * years_back)).strftime("%Y/%m/%d")
+        logger.info("Using PubMed date window: %s to %s (%d years)", start_date, end_date, years_back)
+        papers = client.search_and_fetch(
+            query=query,
+            max_results=count,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    else:
+        logger.info("Using PubMed search without date filter")
+        papers = client.search_and_fetch(
+            query=query,
+            max_results=count,
+        )
     
     if not papers:
         logger.warning(f"No papers found for query: {query}")

@@ -5,18 +5,18 @@ This script runs the complete Discovery Agent workflow on papers
 stored in Neo4j, validating extracted interactions against ChEMBL.
 
 Features:
-- Extracts DDIs from abstracts using Gemini
+- Extracts DDIs from abstracts using Ollama
 - Validates against ChEMBL database
 - Detects conflicts and novel discoveries
 - Updates Neo4j with appropriate labels
 
 Configuration:
-- Processes 5 papers per run by default
-- To change: Edit limit parameter in get_all_papers(graph, limit=5) on line ~88
-- Rate limited: 15 seconds between papers (4 per minute)
+- Processes all unprocessed papers per run
+- Rate limited: 1 second between papers for local execution
 """
 
 import logging
+import os
 import sys
 import time
 from typing import List, Dict, Any
@@ -44,7 +44,7 @@ def get_unprocessed_papers(graph: ResearchGraph) -> List[Dict[str, Any]]:
     """
     Fetch all papers from Neo4j that haven't been validated yet.
     
-    Uses the ResearchGraph method to get papers with 'unprocessed' status.
+    Pulls papers with unprocessed/pending/null status directly from Neo4j.
     
     Args:
         graph: ResearchGraph instance
@@ -52,8 +52,16 @@ def get_unprocessed_papers(graph: ResearchGraph) -> List[Dict[str, Any]]:
     Returns:
         List of paper dictionaries with id, title, abstract
     """
-    # Use the ResearchGraph built-in method which correctly checks status property
-    papers = graph.get_unprocessed_papers(limit=50)
+    # Fetch all unprocessed papers in one run for local processing.
+    query = """
+    MATCH (p:Paper)
+    WHERE p.status IN ['unprocessed', 'pending'] OR p.status IS NULL
+    RETURN p.doi AS doi,
+           p.title AS title,
+           p.abstract AS abstract
+    ORDER BY p.date DESC
+    """
+    papers = graph.query(query)
     
     # Convert field names to match expected format
     formatted_papers = []
@@ -102,15 +110,14 @@ def main():
     logger.info("=" * 80)
     
     # Initialize components
-    agent = DiscoveryAgent(model_name="gemini-2.5-flash")
+    model_name = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+    agent = DiscoveryAgent(model_name=model_name)
+    logger.info(f"Using Ollama model: {model_name}")
     graph = ResearchGraph()
     
     try:
         # Get papers to process - only fetch unprocessed ones to avoid duplicates
         papers = get_unprocessed_papers(graph)
-        
-        # Limit to 5 papers per run to respect API rate limits
-        papers = papers[:5]
         
         if not papers:
             logger.warning("No unprocessed papers found in database. All papers have been validated.")
@@ -182,8 +189,8 @@ def main():
                     except Exception as e:
                         logger.warning(f"  - Failed to update paper status: {e}")
                 
-                # Rate limiting - respect Gemini 2.5-flash limits (5 RPM, 20 RPD)
-                time.sleep(15)  # 15 seconds between papers = 4 per minute (safe buffer)
+                # Brief pause between papers to avoid overwhelming local resources.
+                time.sleep(1)
             
             except Exception as e:
                 logger.error(f"[{i}/{len(papers)}] Error processing {paper_id}: {e}", exc_info=True)

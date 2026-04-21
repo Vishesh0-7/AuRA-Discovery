@@ -9,72 +9,84 @@ the application.
 import os
 from typing import Optional
 from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_ollama import ChatOllama
 
 # Load environment variables
 load_dotenv()
 
 
-def get_gemini_llm(
-    model_name: str = "gemini-2.5-flash",
+def get_ollama_llm(
+    model_name: Optional[str] = None,
     temperature: float = 0.7,
     max_output_tokens: Optional[int] = 8192,
     top_p: float = 0.95,
     top_k: int = 40,
-) -> ChatGoogleGenerativeAI:
+) -> ChatOllama:
     """
-    Create a pre-configured ChatGoogleGenerativeAI instance.
+    Create a pre-configured ChatOllama instance.
     
     Args:
-        model_name: The Gemini model to use (default: gemini-2.5-flash)
+        model_name: The Ollama model to use (defaults to OLLAMA_MODEL or llama3.1:8b)
         temperature: Sampling temperature (0.0 to 1.0)
         max_output_tokens: Maximum tokens in the response
         top_p: Nucleus sampling parameter
         top_k: Top-k sampling parameter
     
     Returns:
-        Configured ChatGoogleGenerativeAI instance
+        Configured ChatOllama instance
     
-    Raises:
-        ValueError: If GOOGLE_API_KEY is not set
+    Notes:
+        OLLAMA_BASE_URL can be used to override the Ollama endpoint.
+        Defaults to http://localhost:11434.
     """
-    api_key = os.getenv("GOOGLE_API_KEY")
-    
-    if not api_key:
-        raise ValueError(
-            "GOOGLE_API_KEY not found in environment variables. "
-            "Please set it in your .env file."
-        )
-    
-    return ChatGoogleGenerativeAI(
-        model=model_name,
-        google_api_key=api_key,
+    base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    resolved_model = model_name or os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+
+    return ChatOllama(
+        model=resolved_model,
+        base_url=base_url,
+        temperature=temperature,
+        num_predict=max_output_tokens,
+        top_p=top_p,
+        top_k=top_k,
+    )
+
+
+def get_gemini_llm(
+    model_name: Optional[str] = None,
+    temperature: float = 0.7,
+    max_output_tokens: Optional[int] = 8192,
+    top_p: float = 0.95,
+    top_k: int = 40,
+) -> ChatOllama:
+    """Backward-compatible wrapper retained for older imports."""
+    return get_ollama_llm(
+        model_name=model_name,
         temperature=temperature,
         max_output_tokens=max_output_tokens,
         top_p=top_p,
         top_k=top_k,
-        convert_system_message_to_human=True,  # For compatibility
     )
 
 
 def get_structured_llm(
-    model_name: str = "gemini-2.5-flash",
+    model_name: Optional[str] = None,
     temperature: float = 0.3,
-) -> ChatGoogleGenerativeAI:
+) -> ChatOllama:
     """
-    Create a Gemini instance optimized for structured output extraction.
+    Create an Ollama instance optimized for structured output extraction.
     
     Uses lower temperature for more deterministic outputs, ideal for
     entity extraction and relationship identification.
     
     Args:
-        model_name: The Gemini model to use
+        model_name: The Ollama model to use
         temperature: Lower temperature for more focused outputs
     
     Returns:
-        Configured ChatGoogleGenerativeAI instance for structured output
+        Configured ChatOllama instance for structured output
     """
-    return get_gemini_llm(
+    return get_ollama_llm(
         model_name=model_name,
         temperature=temperature,
         max_output_tokens=8192,
@@ -82,23 +94,23 @@ def get_structured_llm(
 
 
 def get_reasoning_llm(
-    model_name: str = "gemini-2.5-flash", 
+    model_name: Optional[str] = None,
     temperature: float = 0.9,
-) -> ChatGoogleGenerativeAI:
+) -> ChatOllama:
     """
-    Create a Gemini instance optimized for creative reasoning and synthesis.
+    Create an Ollama instance optimized for creative reasoning and synthesis.
     
     Uses higher temperature for more creative and diverse outputs, ideal for
     hypothesis generation and research synthesis.
     
     Args:
-        model_name: The Gemini model to use
+        model_name: The Ollama model to use
         temperature: Higher temperature for more creative outputs
     
     Returns:
-        Configured ChatGoogleGenerativeAI instance for reasoning
+        Configured ChatOllama instance for reasoning
     """
-    return get_gemini_llm(
+    return get_ollama_llm(
         model_name=model_name,
         temperature=temperature,
         max_output_tokens=8192,
@@ -107,6 +119,6 @@ def get_reasoning_llm(
 
 # Pre-configured default instances for convenience
 # These can be imported directly: from src.factory import default_llm
-default_llm = get_gemini_llm()
+default_llm = get_ollama_llm()
 structured_llm = get_structured_llm()
 reasoning_llm = get_reasoning_llm()

@@ -2,7 +2,7 @@
 Discovery Agent - Agentic Workflow for DDI Validation
 
 This module implements a LangGraph workflow that:
-1. Extracts drug-drug interactions from paper abstracts using Gemini
+1. Extracts drug-drug interactions from paper abstracts using Ollama
 2. Validates each DDI against ChEMBL database
 3. Detects conflicts and potential discoveries
 4. Updates Neo4j with validated, flagged, or novel interactions
@@ -23,6 +23,10 @@ from src.exceptions import ExtractionError, ValidationError
 logger = logging.getLogger(__name__)
 
 
+def chunked(items: List[Dict[str, Any]], size: int) -> List[List[Dict[str, Any]]]:
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
 class DiscoveryAgent:
     """
     Agentic workflow for discovering and validating drug-drug interactions.
@@ -35,12 +39,12 @@ class DiscoveryAgent:
     - Update Neo4j with appropriate labels
     """
     
-    def __init__(self, model_name: str = "gemini-2.5-flash"):
+    def __init__(self, model_name: str = "llama3.1:8b"):
         """
         Initialize the Discovery Agent.
         
         Args:
-            model_name: Gemini model to use for extraction
+            model_name: Ollama model to use for extraction
         """
         self.model_name = model_name
         self.validator = ChEMBLValidator()
@@ -93,7 +97,7 @@ class DiscoveryAgent:
     
     def node_extract(self, state: DiscoveryAgentState) -> DiscoveryAgentState:
         """
-        Node 1: Extract drug-drug interactions from abstract using Gemini.
+        Node 1: Extract drug-drug interactions from abstract using Ollama.
         
         Args:
             state: Current workflow state with raw_abstract
@@ -416,67 +420,80 @@ class DiscoveryAgent:
         # Use context manager to ensure connection is closed
         try:
             with ResearchGraph() as graph:
-                
-                for idx, result in enumerate(state['validation_results']):
-                    try:
-                        # Determine the relationship type and properties
-                        interaction_data = {
-                            'drug_a': result['drug_a'],
-                            'drug_b': result['drug_b'],
-                            'interaction_type': result['interaction_type'],
-                            'evidence_text': result['evidence_text'],
-                            'source_doi': state['paper_id'],
-                            'validation_status': result['validation_status'],
-                            'chembl_validated': result['both_known'],
-                            'drug_a_validated': result['drug_a_validation']['status'] == 'found',
-                            'drug_b_validated': result['drug_b_validation']['status'] == 'found'
-                        }
-                        
-                        # Add conflict or discovery flags
-                        if result.get('conflict_flag'):
-                            interaction_data['conflict_detected'] = True
-                            interaction_data['needs_review'] = True
-                            update_results['conflicts'] += 1
-                        elif result.get('discovery_flag'):
-                            interaction_data['potential_discovery'] = True
-                            interaction_data['requires_validation'] = True
-                            update_results['discoveries'] += 1
-                        else:
-                            update_results['validated'] += 1
-                        
-                        # Store in Neo4j with validation metadata
-                        graph.upsert_drug_interaction(
-                            drug_a=interaction_data['drug_a'],
-                            drug_b=interaction_data['drug_b'],
-                            interaction_type=interaction_data['interaction_type'],
-                            evidence_text=interaction_data['evidence_text'],
-                            source_doi=interaction_data['source_doi'],
-                            validation_status=interaction_data.get('validation_status'),
-                            chembl_validated=interaction_data.get('chembl_validated', False),
-                            drug_a_validated=interaction_data.get('drug_a_validated', False),
-                            drug_b_validated=interaction_data.get('drug_b_validated', False),
-                            conflict_detected=interaction_data.get('conflict_detected', False),
-                            potential_discovery=interaction_data.get('potential_discovery', False),
-                            needs_review=interaction_data.get('needs_review', False),
-                            requires_validation=interaction_data.get('requires_validation', False)
-                        )
-                        
-                    except Exception as e:
-                        # Error recovery: log failure but continue with remaining interactions
-                        error_context = {
-                            'interaction_index': idx,
-                            'drug_a': result.get('drug_a', 'unknown'),
-                            'drug_b': result.get('drug_b', 'unknown'),
-                            'error': str(e),
-                            'error_type': type(e).__name__
-                        }
-                        update_results['failed_interactions'].append(error_context)
-                        update_results['errors'] += 1
-                        logger.error(
-                            f"[NODE: Update Graph] Failed to store interaction {idx + 1}: "
-                            f"{result.get('drug_a', '?')} <-> {result.get('drug_b', '?')}: "
-                            f"{type(e).__name__}: {e}"
-                        )
+
+                interaction_payloads = []
+                for result in state['validation_results']:
+                    interaction_data = {
+                        'drug_a': result['drug_a'],
+                        'drug_b': result['drug_b'],
+                        'interaction_type': result['interaction_type'],
+                        'evidence_text': result['evidence_text'],
+                        'source_doi': state['paper_id'],
+                        'validation_status': result['validation_status'],
+                        'chembl_validated': result['both_known'],
+                        'drug_a_validated': result['drug_a_validation']['status'] == 'found',
+                        'drug_b_validated': result['drug_b_validation']['status'] == 'found'
+                    }
+
+                    if result.get('conflict_flag'):
+                        interaction_data['conflict_detected'] = True
+                        interaction_data['needs_review'] = True
+                        update_results['conflicts'] += 1
+                    elif result.get('discovery_flag'):
+                        interaction_data['potential_discovery'] = True
+                        interaction_data['requires_validation'] = True
+                        update_results['discoveries'] += 1
+                    else:
+                        update_results['validated'] += 1
+
+                    interaction_payloads.append(interaction_data)
+
+                batch_size = 25
+                for batch_index, interaction_batch in enumerate(chunked(interaction_payloads, batch_size), 1):
+                    logger.info(
+                        "[NODE: Update Graph] Upserting batch %d with %d interactions",
+                        batch_index,
+                        len(interaction_batch),
+                    )
+
+                    batch_result = graph.batch_upsert_drug_interactions(interaction_batch)
+
+                    if batch_result['success']:
+                        continue
+
+                    logger.error("[NODE: Update Graph] Batch write failed: %s", batch_result['message'])
+                    for idx, interaction_data in enumerate(interaction_batch):
+                        try:
+                            graph.upsert_drug_interaction(
+                                drug_a=interaction_data['drug_a'],
+                                drug_b=interaction_data['drug_b'],
+                                interaction_type=interaction_data['interaction_type'],
+                                evidence_text=interaction_data['evidence_text'],
+                                source_doi=interaction_data['source_doi'],
+                                validation_status=interaction_data.get('validation_status'),
+                                chembl_validated=interaction_data.get('chembl_validated', False),
+                                drug_a_validated=interaction_data.get('drug_a_validated', False),
+                                drug_b_validated=interaction_data.get('drug_b_validated', False),
+                                conflict_detected=interaction_data.get('conflict_detected', False),
+                                potential_discovery=interaction_data.get('potential_discovery', False),
+                                needs_review=interaction_data.get('needs_review', False),
+                                requires_validation=interaction_data.get('requires_validation', False)
+                            )
+                        except Exception as e:
+                            error_context = {
+                                'interaction_index': idx,
+                                'drug_a': interaction_data.get('drug_a', 'unknown'),
+                                'drug_b': interaction_data.get('drug_b', 'unknown'),
+                                'error': str(e),
+                                'error_type': type(e).__name__
+                            }
+                            update_results['failed_interactions'].append(error_context)
+                            update_results['errors'] += 1
+                            logger.error(
+                                f"[NODE: Update Graph] Failed to store interaction {idx + 1}: "
+                                f"{interaction_data.get('drug_a', '?')} <-> {interaction_data.get('drug_b', '?')}: "
+                                f"{type(e).__name__}: {e}"
+                            )
             
             state['graph_update_results'] = update_results
             state['next_step'] = 'end'
@@ -579,7 +596,7 @@ def discover_and_validate(
     paper_id: str,
     abstract: str,
     title: str = "",
-    model_name: str = "gemini-2.5-flash"
+    model_name: str = "llama3.1:8b"
 ) -> Dict[str, Any]:
     """
     Run the complete discovery and validation workflow on a paper.
@@ -588,7 +605,7 @@ def discover_and_validate(
         paper_id: Paper DOI or identifier
         abstract: Paper abstract text
         title: Paper title (optional, currently stored but not used in extraction)
-        model_name: Gemini model to use
+        model_name: Ollama model to use
     
     Returns:
         Final workflow state with all results

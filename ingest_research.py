@@ -9,7 +9,6 @@ Usage:
     python ingest_research.py
 
 Environment Variables Required:
-    - GOOGLE_API_KEY: Google Gemini API key
     - NEO4J_URI: Neo4j database URI
     - NEO4J_USERNAME: Neo4j username
     - NEO4J_PASSWORD: Neo4j password
@@ -19,6 +18,7 @@ Date: March 2026
 """
 
 import logging
+import os
 import sys
 from typing import Dict, Any, List
 from dotenv import load_dotenv
@@ -42,6 +42,10 @@ if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 logger = logging.getLogger(__name__)
+
+
+def chunked(items: List[Dict[str, Any]], size: int) -> List[List[Dict[str, Any]]]:
+    return [items[i:i + size] for i in range(0, len(items), size)]
 
 
 def ingest_papers(
@@ -108,41 +112,52 @@ def ingest_papers(
             )
             
             # Step 3: Ingest papers
-            logger.info(f"\n[Step 3/3] Ingesting {len(papers)} papers into graph...")
-            
-            for idx, paper in enumerate(papers, 1):
-                try:
-                    # Validate required fields
-                    if not paper.get("doi"):
-                        logger.warning(f"Paper {idx}: Missing DOI, skipping")
-                        stats["failed"] += 1
-                        continue
-                    
-                    doi = paper["doi"]
-                    title = paper.get("title", "")[:50]  # Truncate for logging
-                    
-                    logger.info(f"  [{idx}/{len(papers)}] Processing: {doi}")
-                    logger.debug(f"    Title: {title}...")
-                    
-                    # Upsert paper into graph
-                    result = graph.upsert_paper(paper)
-                    
-                    if result["success"]:
-                        stats["total_ingested"] += 1
-                        logger.info(
-                            f"    [OK] Ingested with {result['authors_created']} authors"
-                        )
-                    else:
-                        stats["failed"] += 1
-                        error_msg = f"Paper {doi}: {result['message']}"
-                        stats["errors"].append(error_msg)
-                        logger.error(f"    [FAIL] Failed: {result['message']}")
-                
-                except Exception as e:
-                    stats["failed"] += 1
-                    error_msg = f"Paper {idx}: {str(e)}"
-                    stats["errors"].append(error_msg)
-                    logger.error(f"    [ERROR] Error: {e}", exc_info=True)
+            logger.info(f"\n[Step 3/3] Ingesting {len(papers)} papers into graph in batches...")
+
+            batch_size = 50
+            paper_batches = chunked(papers, batch_size)
+
+            for batch_index, paper_batch in enumerate(paper_batches, 1):
+                logger.info(
+                    "  [batch %d/%d] Upserting %d papers",
+                    batch_index,
+                    len(paper_batches),
+                    len(paper_batch),
+                )
+
+                result = graph.batch_upsert_papers(paper_batch)
+
+                if result["success"]:
+                    stats["total_ingested"] += result.get("processed", 0)
+                    stats["failed"] += result.get("failed", 0)
+                    for skipped_item in result.get("skipped", []):
+                        stats["errors"].append(f"Skipped paper: {skipped_item}")
+                    logger.info(
+                        "    [OK] Batch stored %d papers",
+                        result.get("processed", 0),
+                    )
+                else:
+                    stats["failed"] += len(paper_batch)
+                    stats["errors"].append(result["message"])
+                    logger.error("    [FAIL] %s", result["message"])
+
+                    # Fallback to row-by-row upserts for the failed batch so we keep partial progress.
+                    for idx, paper in enumerate(paper_batch, 1):
+                        try:
+                            if not paper.get("doi"):
+                                logger.warning("Paper %d in failed batch: Missing DOI, skipping", idx)
+                                stats["failed"] += 1
+                                continue
+
+                            fallback = graph.upsert_paper(paper)
+                            if fallback["success"]:
+                                stats["total_ingested"] += 1
+                            else:
+                                stats["failed"] += 1
+                                stats["errors"].append(fallback["message"])
+                        except Exception as exc:
+                            stats["failed"] += 1
+                            stats["errors"].append(str(exc))
             
             # Get final statistics
             final_stats = graph.get_statistics()
@@ -187,11 +202,14 @@ def main():
         logger.info("Loading environment variables...")
         load_dotenv()
         logger.info("[OK] Environment variables loaded")
+
+        target_count = int(os.getenv("PUBMED_TARGET_COUNT", "2000"))
+        logger.info("Using PUBMED_TARGET_COUNT=%d", target_count)
         
-        # Execute ingestion with a targeted query for papers with explicit drug interactions
+        # Execute ingestion with a broader DDI query for higher recall.
         stats = ingest_papers(
-            query="(warfarin OR clopidogrel OR aspirin OR statins OR digoxin) AND (drug interaction[Title/Abstract] OR drug-drug interaction[Title/Abstract])",
-            count=50
+            query='("drug interaction"[Title/Abstract] OR "drug-drug interaction"[Title/Abstract] OR DDI[Title/Abstract] OR "pharmacokinetic interaction"[Title/Abstract] OR "pharmacodynamic interaction"[Title/Abstract])',
+            count=target_count
         )
         
         # Print summary
