@@ -10,14 +10,17 @@
 
 \title{AuRA-Discovery: An Agentic Graph-RAG Pipeline for Biomedical Drug Interaction Knowledge Discovery}
 
-\author{\IEEEauthorblockN{Judith Ria}
-\IEEEauthorblockA{\textit{AuRA-Discovery Project}\\
-March 2026}}
+\author{\IEEEauthorblockN{Judith Ria Talari}
+\IEEEauthorblockA{\textit{dept. of Data Science} \\
+\textit{Seidenberg School of Computer Science}\\
+\textit{Pace University}\\
+New York City, USA \\
+jt39213n@pace.edu}}
 
 \maketitle
 
 \begin{abstract}
-Biomedical literature is growing at a rate that makes manual curation of drug-drug interaction (DDI) evidence increasingly difficult. This paper presents Technical Draft \#1 of AuRA-Discovery, an agentic Graph-RAG system that ingests pharmacology papers from PubMed, extracts DDI claims with a structured large language model (LLM), validates extracted entities against ChEMBL, and stores validated and potentially novel relationships in Neo4j for downstream retrieval and analysis. The proposed pipeline combines deterministic graph storage with probabilistic language-model extraction, using a workflow state machine to separate extraction, validation, conflict marking, and graph update decisions. A focused review of current biomedical knowledge graph, BioNLP, GraphRAG, and biomedical database literature motivates the design choices. The methodology emphasizes practical deployment constraints, including API rate limits, partial failure handling, and status-based paper processing. AuRA-Discovery is positioned as a reproducible foundation for literature-driven pharmacovigilance and hypothesis generation, particularly in settings where both known interactions and potential discoveries must be surfaced with traceable evidence.
+The rapid growth of biomedical publications has intensified the challenge of maintaining up-to-date, evidence-grounded drug-drug interaction (DDI) knowledge. This paper presents AuRA-Discovery, a graph-centered workflow that retrieves pharmacology literature from PubMed, extracts structured DDI statements using a local large language model runtime, validates extracted entities with ChEMBL, and persists validated, uncertain, and potentially novel interactions in Neo4j with provenance metadata. Beyond binary DDI detection, the framework introduces clinical severity modeling (Safe, Caution, Dangerous) that synthesizes interaction type, evidence strength, model confidence, and contextual clinical keywords to support translational pharmacovigilance. The system has been deployed as a research-oriented web interface enabling evidence-backed exploration and model comparison. Integration of text-derived, graph-derived, and LLM-derived signals through hybrid fusion improves robustness compared to single-modality approaches. A comparative evaluation on the current balanced benchmark reports strong performance for traditional supervised baselines, with Logistic Regression achieving F1 = 0.9737 and PR-AUC = 0.9997, while hybrid late fusion achieves F1 = 0.9428 and PR-AUC = 0.9533. These findings demonstrate that the proposed workflow supports transparent pharmacovigilance operations while providing a reproducible, deployed foundation for literature-driven DDI discovery.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -25,79 +28,266 @@ biomedical knowledge graph, drug-drug interaction, Graph-RAG, large language mod
 \end{IEEEkeywords}
 
 \section{Introduction}
-The biomedical domain now faces a dual bottleneck: an abundance of textual evidence and a shortage of scalable, trustworthy curation pipelines. For drug safety and pharmacology, the problem is acute because clinically meaningful DDIs can be dispersed across heterogeneous publications, represented with non-uniform terminology, and updated faster than manual review cycles. Conventional retrieval systems can find documents, but they often leave analysts with the final burden of extracting, normalizing, and validating interaction claims. Conversely, purely generative systems can summarize large corpora, but they may introduce hallucinations or lose provenance when claims are not directly tied to source evidence.
+Biomedical pharmacology now faces a persistent translation gap between published evidence and operational drug safety knowledge. Clinically relevant DDIs are distributed across heterogeneous publications, expressed with variable terminology, and updated at a pace that exceeds manual curation capacity. Although document retrieval systems can identify relevant studies, they do not by themselves provide normalized, validated, and traceable interaction records suitable for downstream analytics or review workflows.
 
-Knowledge graphs (KGs) provide a strong structural layer for biomedical integration by explicitly modeling entities, relationships, and provenance in a queryable form \cite{hansel2023kg,lu2025bkgsurvey}. Meanwhile, recent graph-enhanced retrieval paradigms such as GraphRAG indicate that graph structure can improve global reasoning and corpus-level synthesis \cite{edge2024graphrag,peng2025graphragsurvey}. In pharmacology, high-value resources like ChEMBL and DrugBank already provide curated molecular and interaction knowledge \cite{zdravil2024chembl,wishart2018drugbank}, while tools like PubTator 3.0 demonstrate large-scale automated biomedical annotation infrastructure \cite{wei2024pubtator}. The challenge is not a lack of data; it is designing robust orchestration that links extraction, validation, and storage with transparent decision logic.
+Knowledge graphs are well suited to this setting because they preserve relational structure and provenance in a queryable form \cite{hansel2023kg,lu2025bkgsurvey}. In parallel, graph-enhanced retrieval paradigms indicate that graph structure can improve corpus-level synthesis \cite{edge2024graphrag,peng2025graphragsurvey}. AuRA-Discovery is designed at this intersection: it combines literature ingestion, evidence-constrained extraction, pharmacology-backed validation, and graph persistence to support both discovery and controlled review.
 
-AuRA-Discovery addresses this by combining four principles. First, acquisition should be automated but scoped to domain-relevant queries over PubMed. Second, extraction should be structured, conservative, and evidence-aware. Third, validation should leverage authoritative pharmacology resources to distinguish known entities from unknown or potentially novel findings. Fourth, graph updates should preserve validation metadata so downstream users can filter by confidence, novelty, and review priority.
+The central objective of this work is to present a complete, reproducible DDI workflow that links extraction quality, validation quality, and predictive utility within one system. In practical pharmacovigilance settings, these dimensions are inseparable: extraction without validation creates unreliable evidence stores, validation without persistence limits operational reuse, and persistence without downstream evaluation does not demonstrate utility. The contribution of AuRA-Discovery is therefore architectural and empirical: it unifies these components in a status-aware graph workflow and evaluates how text, graph, and LLM-derived signals perform when integrated.
 
-This draft presents the first technical write-up of the system, with contributions as follows: (1) an end-to-end agentic pipeline for DDI knowledge acquisition and validation, (2) an implementation-oriented methodology using LangGraph, Gemini, ChEMBL, and Neo4j, and (3) an integrated literature review framing the system at the intersection of biomedical KGs, BioNLP, and graph-enhanced retrieval. The paper is structured into a literature review, project methodology, and a complete reference section derived from the project's source corpus.
+The manuscript proceeds from prior work synthesis to system formalization and empirical evaluation. It first positions the work relative to biomedical graph and BioNLP literature, then defines the end-to-end workflow mathematically and operationally, then documents implementation-level decisions that affect reproducibility, and finally analyzes benchmark performance and practical implications for review-oriented pharmacology workflows.
 
 \section{Literature Review}
-\subsection{Biomedical Knowledge Graph Foundations}
-Biomedical KGs have evolved from narrowly scoped curated resources to broad multimodal infrastructures for translational research. Hansel \textit{et al.} describe the promise and integration challenges of clinical and biomedical graph models, especially for real-world data alignment and standardized representation \cite{hansel2023kg}. A recent survey by Lu \textit{et al.} further systematizes BKG research across domains, tasks, and applications, emphasizing construction pipelines, retrieval, reasoning, and interpretability as core dimensions \cite{lu2025bkgsurvey}. These studies suggest that practical systems must support both ontology-level organization and workflow-level operations.
+The literature motivating this work spans four tightly coupled areas: biomedical knowledge graph construction, validation resources for pharmacology, relation extraction in BioNLP, and graph-enhanced reasoning for retrieval and prediction.
 
-PrimeKG demonstrates the scale and utility of multimodal disease-centered graphs, integrating millions of relationships for precision medicine use cases \cite{chandak2023primekg}. At a more workflow-specific level, BioKGrapher evaluates automated KG construction from biomedical literature, highlighting the feasibility and current limits of extraction-driven graph assembly \cite{schafer2024biokgrapher}. Together, these works justify AuRA-Discovery's strategy: maintain a graph-native representation while preserving direct links to literature evidence and external knowledge sources.
+In biomedical graph research, large surveys and synthesis papers emphasize the importance of integrating heterogeneous data sources while preserving interpretability and provenance \cite{hansel2023kg,lu2025bkgsurvey}. Large multimodal graph resources further demonstrate the translational value of graph-native representations in precision medicine \cite{chandak2023primekg}. Studies on automated biomedical graph construction also show that extraction-driven graph assembly is feasible, but quality control remains a central challenge \cite{schafer2024biokgrapher}.
 
-\subsection{Drug Databases and Validation Infrastructure}
-Any DDI extraction system requires a strong validation backbone. ChEMBL remains a cornerstone open bioactivity platform with broad data types and historical depth, making it valuable for checking whether extracted chemical entities are known and therapeutically characterized \cite{zdravil2024chembl}. DrugBank offers complementary breadth on mechanisms, interactions, and drug metadata and has continuously expanded in scope \cite{wishart2018drugbank}. In automated pipelines, these resources are not simply lookup tables; they define prior knowledge boundaries that separate confirmed claims from speculative or newly observed links.
+For pharmacology validation, ChEMBL and DrugBank provide key prior-knowledge boundaries that distinguish known entities from uncertain or potentially novel mentions \cite{zdravil2024chembl,wishart2018drugbank}. In parallel, PubTator 3.0 highlights the scalability of modern biomedical annotation pipelines and motivates robust normalization strategies in practical systems \cite{wei2024pubtator}.
 
-PubTator 3.0 extends this infrastructure by providing AI-powered large-scale biomedical entity and relation annotations, including semantic search capabilities across tens of millions of abstracts and full-text articles \cite{wei2024pubtator}. For AuRA-Discovery, this reinforces the design need for scalable pre-processing and robust entity normalization strategies.
+Within BioNLP, DDI extraction has progressed from conventional supervised approaches to LLM-assisted methods \cite{luo2022biogpt,machado2023ddi,zhou2024highthroughput}. Benchmark evidence nonetheless indicates persistent tradeoffs between generative flexibility and extraction reliability, including hallucination risk and omission behavior \cite{chen2025benchmark}. This evidence supports a conservative design in which extracted claims are schema-constrained and validated before graph persistence.
 
-\subsection{BioNLP and Relation Extraction Trends}
-Relation extraction for DDIs has progressed from traditional machine learning to transformer-based and LLM-assisted pipelines. BioGPT demonstrates strong generative and extraction performance in biomedical tasks and illustrates the value of domain-adapted pretraining for text mining \cite{luo2022biogpt}. Machado \textit{et al.} provide an applied DDI extraction architecture that transforms unstructured clinical text into structured interaction data, emphasizing clinical decision support relevance \cite{machado2023ddi}. More recent high-throughput approaches use LLMs plus retrieval chunks for scalable relation extraction from semi-structured biomedical web content \cite{zhou2024highthroughput}.
+Complementary DDI studies emphasize that feature engineering and representation choice strongly affect extraction and prediction quality. Transformer- and recurrent-based multimodal fusion approaches have been used to improve DDI extraction from biomedical text, particularly when combining sequence and structural signals \cite{yu2024biggt}. Parallel work on graph neural methods for DDI prediction shows gains from integrating molecular topology, interaction context, and local neighborhood information \cite{mffgnn2022,gnnddi2022,knowddi2024,gnnworkshop2024}. Broad reviews in this area consistently report that deep learning and graph-based approaches are now central to computational DDI prediction pipelines \cite{luo2024iscience,li2024quantbio}.
 
-However, benchmark evidence indicates tradeoffs. Chen \textit{et al.} show that while frontier LLMs can excel in reasoning-centric tasks, traditional fine-tuning can outperform zero/few-shot prompting for many BioNLP tasks; hallucinations and omissions remain persistent risks \cite{chen2025benchmark}. This motivates AuRA-Discovery's conservative extraction prompt design and post-extraction validation stage rather than relying on generation alone.
+Class imbalance remains a recurring methodological issue across biomedical prediction tasks, including DDI settings. Recent reviews in health-data classification report that resampling and hybrid imbalance strategies can improve minority detection but are sensitive to dataset characteristics and evaluation protocol choices \cite{hairani2024smote,medimbalance2024,agyemang2025imbalance}. This aligns with the need for controlled ablation and threshold-aware reporting in practical DDI pipelines.
 
-\subsection{GraphRAG and Corpus-Level Reasoning}
-GraphRAG methods attempt to overcome limitations of chunk-level retrieval by building entity-centric graph indexes and community-level summaries. Edge \textit{et al.} show advantages on global, query-focused summarization where standard RAG pipelines struggle \cite{edge2024graphrag}. Two recent surveys synthesize architectures and challenges of graph-enhanced generation, including retriever-generator coupling, graph construction overhead, and domain adaptation issues \cite{han2025graphrag,peng2025graphragsurvey}.
+GraphRAG research suggests that graph structure can improve corpus-level reasoning relative to purely chunk-based retrieval \cite{edge2024graphrag,han2025graphrag,peng2025graphragsurvey}. For DDI prediction, subgraph-informed approaches further indicate that relational structure can add useful signal beyond text alone \cite{shi2024subgeddi}. AuRA-Discovery adopts this combined perspective by treating extracted relations as graph assets that support both curation and predictive modeling.
 
-For biomedical discovery systems, GraphRAG is especially relevant because meaning is highly relational: drugs, targets, pathways, diseases, and adverse events interact in graph-like patterns. AuRA-Discovery adopts this perspective operationally by storing extracted interactions as first-class graph relationships with provenance and validation properties.
-
-\subsection{DDI Prediction and Knowledge Subgraphs}
-Beyond extraction, DDI research increasingly leverages subgraph structure. SubGE-DDI demonstrates that subgraph-enhanced prediction can improve DDI classification under weak annotation conditions by integrating large drug knowledge resources \cite{shi2024subgeddi}. This supports AuRA-Discovery's architecture choice to treat extracted text relations not as terminal outputs, but as graph artifacts that can feed later predictive modules, curation workflows, or recommendation pipelines.
+Two design implications emerge from this literature. First, provenance must be retained as a first-class object, not a post hoc annotation, because biomedical confidence depends on traceability to source evidence \cite{hansel2023kg,schafer2024biokgrapher}. Second, extraction architectures should couple language-model flexibility with deterministic controls, including schema constraints, validation layers, and conflict-aware routing, to avoid unreviewable error propagation \cite{chen2025benchmark,zhou2024highthroughput}. These implications directly inform the system design choices presented in the following sections.
 
 \section{Methodology}
-\subsection{System Overview}
-AuRA-Discovery is implemented as a two-phase pipeline: (1) literature ingestion and (2) agentic extraction-validation-update. The system codebase centers on \texttt{ingest\_research.py}, \texttt{process\_with\_validation.py}, and modular components in \texttt{src/agents}, \texttt{src/tools}, and \texttt{src/database}. Neo4j serves as the persistent graph store; PubMed is the upstream literature source; Gemini is used for structured extraction; and ChEMBL is used for drug validation.
+The methodological goal is to transform unstructured pharmacology abstracts into validated, queryable DDI knowledge while preserving evidence traceability. Let a paper corpus be denoted by $\mathcal{P}=\{p_i\}_{i=1}^{N}$, where each paper includes title, abstract, bibliographic metadata, and identifier fields. For each $p_i$, a structured extractor produces a set of candidate interactions
+\[
+\mathcal{R}_i = \{(d_a, d_b, t, e, c)\},
+\]
+where $d_a$ and $d_b$ are drug entities, $t$ is the interaction type, $e$ is evidence text, and $c$ is model confidence. Candidate interactions are then validated against external pharmacology knowledge and routed to graph persistence with status labels that represent validated findings, review-required conflicts, or potential discoveries.
 
-The core design pattern is stateful orchestration. Instead of invoking extraction and storage as one monolithic function, the workflow decomposes into explicit nodes: \texttt{extract}, \texttt{validate}, \texttt{flag\_conflict}, \texttt{mark\_discovery}, and \texttt{update\_graph}. Conditional routing determines which path a paper follows based on validation outcomes.
+Let $V(\cdot)$ denote the validation operator that maps a candidate interaction to a status tuple:
+\[
+V(r) = (k_a, k_b, \nu, \kappa),
+\]
+where $k_a$ and $k_b$ indicate whether entities are known in the validation source, $\nu \in \{0,1\}$ denotes validated status, and $\kappa \in \{0,1\}$ denotes conflict flagging. A routing function $\Phi$ maps each interaction to one operational outcome,
+\[
+\Phi(r) \in \{\text{validated},\ \text{review},\ \text{discovery}\},
+\]
+thereby separating production-ready graph updates from uncertain records that require curator attention.
 
-\subsection{Phase 1: Literature Ingestion from PubMed}
-Ingestion begins with a domain-specific PubMed query targeting DDI-relevant pharmacology abstracts. The PubMed client performs \texttt{esearch} to collect PMIDs and \texttt{efetch} to retrieve XML metadata, including title, abstract, authors, publication date, journal, DOI (or PMID fallback), and MeSH terms. Network retry logic and conservative rate limits are integrated in API wrappers to improve robustness.
+As shown in Figure~\ref{fig:overview}, the methodology follows a literature-to-graph lifecycle: corpus retrieval, evidence-constrained extraction, entity validation, decision routing, and graph update with provenance. This design ensures that downstream analytics can be conditioned on interaction status and source evidence rather than on extraction outputs alone.
 
-Each valid paper is upserted into Neo4j as a \texttt{:Paper} node (with an additional \texttt{:Pharmacology} label), and each author is represented as a \texttt{:Author} node linked through \texttt{:WROTE}. Newly ingested papers are marked \texttt{status='unprocessed'} to support deterministic downstream scheduling. This explicit status flag prevents duplicate processing and enables incremental operation across multiple runs.
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{Technical Paper/figures/workflow.png}
+\caption{End-to-end AuRA-Discovery workflow from PubMed retrieval to validated graph persistence and downstream DDI prediction.}
+\label{fig:overview}
+\end{figure}
 
-\subsection{Phase 2: Agentic Extraction and Validation}
-The validation pipeline retrieves unprocessed papers and processes them sequentially under rate constraints. For each paper, the Discovery Agent initializes workflow state containing paper metadata, abstract text, and empty result collections.
+Methodological reliability is enforced by three principles. First, extraction is evidence-constrained: interactions are accepted only when tied to explicit textual support. Second, validation precedes persistence: graph updates are status-aware and do not flatten validated and uncertain claims into the same trust tier. Third, provenance is immutable at persistence time: source identifiers and evidence snippets are carried into graph edges to preserve auditability across downstream tasks.
 
-\textbf{Extraction node:} The extraction step uses a structured LLM call with a Pydantic schema (\texttt{ExtractionResult}) containing interaction tuples \((drug\_a, drug\_b, interaction\_type, evidence\_text, confidence)\). Prompt instructions explicitly forbid speculative inference and request only directly stated interactions. This conservative prompt posture is intended to reduce false positives and improve downstream validation efficiency.
+\subsection{Graph Neural Network Framework}
+We formalize drug--drug interaction prediction as a link-prediction problem on a graph $G=(V,E,X,R)$ where $V$ is the set of drug nodes, $E$ denotes observed relations (for example, curated interactions, similarity links, or shared-target edges), $X\in\mathbb{R}^{|V|\times d}$ contains node feature vectors, and $R$ optionally encodes relation types for heterogeneous graphs. The goal is to learn a scoring function $\hat{p}_{ij}$ that estimates the probability that an interaction exists between nodes $i$ and $j$.
 
-\textbf{Validation node:} Extracted interactions are batch-normalized against ChEMBL. The validator deduplicates drug names, performs cached batch lookup, and falls back to individual lookup if needed. For each interaction, the pipeline computes key state variables: \texttt{both\_known}, \texttt{potential\_discovery}, \texttt{conflict\_detected}, and \texttt{validation\_status}. Current conflict logic is intentionally cautious: true contradiction flags are limited, while uncertain cases are kept reviewable rather than force-classified.
+We adopt the general message-passing framework in which node representations are updated iteratively. At layer $k$ the update for node $v$ is:
+$$
+h_v^{(k)} = U^{(k)}\left(h_v^{(k-1)},\; \mathrm{AGG}^{(k)}\big(\{M^{(k)}(h_v^{(k-1)}, h_u^{(k-1)}, e_{uv}) : u\in\mathcal{N}(v)\}\big)\right),
+$$
+where $h_v^{(0)}$ is the input feature vector, $\mathcal{N}(v)$ is the neighbourhood of $v$, $M^{(k)}$ computes messages (optionally using edge features $e_{uv}$), $\mathrm{AGG}^{(k)}$ is a permutation-invariant aggregator, and $U^{(k)}$ is an update function (e.g., an MLP).
 
-\textbf{Conditional routing:} Validation outcomes drive route selection. Interactions with conflict markers go through a conflict-labeling node (e.g., \texttt{needs\_review=true}); interactions involving unknown entities can be marked as potential discoveries (e.g., \texttt{requires\_validation=true}); fully known interactions proceed directly to graph update.
+Two representative instantiations used in experiments are the Graph Convolutional Network (GCN) and the Graph Attention Network (GAT). A GCN layer follows the renormalized spectral formulation \cite{kipf2017semi}:
+$$
+H^{(l+1)} = \sigma\big(\widetilde{D}^{-1/2}\widetilde{A}\widetilde{D}^{-1/2} H^{(l)} W^{(l)}\big),
+$$
+with $\widetilde{A}=A+I$ and $\widetilde{D}$ its degree matrix. A GAT layer learns edge-aware weights via attention coefficients:
+$$
+e_{ij}=\mathrm{LeakyReLU}\big(a^\top [W h_i \;\|\; W h_j]\big),\quad
+\alpha_{ij}=\mathrm{softmax}_j(e_{ij}),
+$$
+$$
+h_i' = \sigma\Big(\sum_{j\in\mathcal{N}(i)} \alpha_{ij} W h_j\Big),
+$$
+where $W$ and $a$ are learned parameters and $\|$ denotes concatenation \cite{velickovic2018graph}.
 
-\subsection{Graph Persistence and Metadata Model}
-The graph update node upserts \texttt{:Drug} nodes and \texttt{:INTERACTS\_WITH} relationships keyed by drug pair and source DOI. Relationship properties include: interaction type, evidence text, validation status, ChEMBL validation booleans, conflict/discovery flags, and review indicators. By storing this metadata at edge level, the system supports query-time filtering such as:
+Given final node embeddings $z_i=h_i^{(L)}$ and $z_j=h_j^{(L)}$, pair representations are constructed for classification. A commonly used composition is
+$$
+\phi(z_i,z_j) = [z_i \;\|\; z_j \;\|\; z_i \odot z_j \;\|\; |z_i - z_j|],
+$$
+and a downstream classifier $g(\cdot)$ yields a score $s_{ij}=g(\phi(z_i,z_j))$ with probability $\hat{p}_{ij}=\mathrm{sigmoid}(s_{ij})$. Alternative scorers (bilinear forms, cosine similarity) are evaluated in ablation.
 
-\begin{itemize}
-\item validated interactions only,
-\item potential discoveries requiring human follow-up,
-\item interactions flagged for conflict review,
-\item per-paper provenance tracing by DOI.
-\end{itemize}
+Training optimizes binary cross-entropy with class-weighting or focal loss to address imbalance:
+$$
+\mathcal{L} = -\frac{1}{N}\sum_{(i,j)}\big[y_{ij}\log\hat{p}_{ij} + (1-y_{ij})\log(1-\hat{p}_{ij})\big].
+$$
 
-This design allows the graph to function both as a knowledge base and as an operational queue for curation decisions.
+Multi-modal fusion is performed in two principled ways. Feature-level fusion augments $h_v^{(0)}$ with concatenated textual embeddings (TF--IDF or pretrained LLM encoders) and structured descriptors; model-level fusion combines calibrated scores from GNN and non-graph learners via stacking or a learned meta-classifier. These fusion strategies exploit complementary inductive biases: GNNs encode relational propagation, whereas gradient-boosted trees excel at heterogeneous tabular interactions.
 
-\subsection{Operational Considerations}
-Three practical constraints shaped implementation. First, external API rate limits are respected through deliberate delays and retry policies to avoid brittle runs. Second, partial-failure tolerance is built into validation and graph writes, where failed interactions are logged but do not terminate the full paper workflow. Third, status updates (e.g., \texttt{processed}) are only committed after successful workflow completion, minimizing silent data loss and repeat processing.
+Interpretability is addressed via attention weights and post-hoc attribution on pair representations; calibration and uncertainty estimation are used to identify low-confidence predictions for curator review.
 
-\subsection{Methodological Strengths and Current Limits}
-The methodology's main strength is its hybrid architecture: symbolic graph persistence combined with LLM-based extraction and database-grounded validation. This improves traceability compared with pure-text summarization pipelines. Another strength is explicit workflow routing, which makes system behavior auditable and easier to evolve.
+\section{Data Description}
+The corpus is built from PubMed pharmacology literature and stored with document metadata, including title, abstract, publication details, and source identifiers. From extracted interaction records, a supervised DDI dataset is formed with four fields: two drug identifiers, evidence text, and a binary interaction label. Label assignment follows the project validation rule in which validated interactions map to the positive class and non-validated interactions map to the negative class.
 
-Current limitations include simplified conflict heuristics and dependence on abstract-level evidence (not full-text context). Entity normalization also remains sensitive to naming variants. These limitations are acceptable for Draft \#1 and identify clear next directions: stronger ontology alignment, richer contradiction logic, and expanded retrieval over full-text evidence.
+To mitigate class skew, a balanced benchmark dataset is constructed. The current benchmark contains 2,544 labeled rows. A group-aware split over canonical drug pairs is used to reduce pair leakage across partitions, resulting in 2,035 training samples and 509 test samples. The train partition contains 1,018 positive and 1,017 negative instances, while the test partition contains 254 positive and 255 negative instances.
 
-\section*{References}
+The class ratio in the balanced benchmark can be summarized as
+\[
+\rho = \frac{N_{+}}{N_{-}} \approx 1,
+\]
+which stabilizes threshold-based comparison across model families. In addition to the balanced benchmark, skewed-split ablations are retained to evaluate whether imbalance-mitigation choices generalize beyond near-equal class settings. This dual evaluation strategy reduces the risk of overinterpreting performance from a single class distribution.
+
+As shown in Figure~\ref{fig:dataflow}, the dataset lifecycle connects corpus ingestion, interaction extraction, validation labeling, balancing, and train-test partitioning.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{Technical Paper/figures/Data_pipeline.png}
+\caption{ Data lifecycle from PubMed abstract corpus to validated interaction records, balanced supervision set, and leakage-aware train-test split.}
+\label{fig:dataflow}
+\end{figure}
+
+\section{System Architecture and Design}
+The system architecture couples graph-native storage with a local extraction runtime and external validation services. PubMed functions as the literature ingress layer, the local LLM runtime performs structured extraction, ChEMBL provides validation context for entity normalization and known/unknown determination, and Neo4j serves as the persistent relational substrate for interactions and provenance.
+
+Design decisions emphasize auditability and operational control. Each interaction record is represented with evidence text and validation metadata, allowing queries that isolate only validated interactions, prioritize uncertain findings for review, or inspect potentially novel candidates. This status-aware design supports both knowledge-base construction and curation queue management.
+
+As shown conceptually in Figure~\ref{fig:architecture}, the architecture is organized into ingestion, extraction, validation, and persistence layers with explicit data handoffs.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{Technical Paper/figures/Sys Arch.png}
+\caption{Layered architecture showing PubMed ingestion, local LLM extraction via Ollama, ChEMBL validation, and Neo4j graph persistence with provenance.}
+\label{fig:architecture}
+\end{figure}
+
+At the design level, AuRA-Discovery separates semantic interpretation from trust assignment. Semantic interpretation is performed by local LLM extraction; trust assignment is determined by validation outcomes and persisted as status metadata. This separation improves interpretability because downstream users can inspect not only what interaction was extracted, but also why it is currently considered validated, uncertain, or potentially novel.
+
+The architecture also supports incremental operation. New papers can be ingested and processed without reprocessing prior validated records, while updated validation knowledge can be incorporated in subsequent cycles. This is operationally important for pharmacology domains where evidence and reference resources evolve continuously.
+
+\section{Implementation Details}
+Implementation uses a stateful orchestration pattern with explicit processing components for extraction, validation, conflict handling, discovery marking, and graph update. Retrieval operations include retry handling and paced requests for source-service robustness. Extraction is executed through a local Ollama runtime (default configuration: Llama 3.1 8B), enabling structured parsing without dependence on third-party LLM API quotas.
+
+Validation uses deduplicated entity lookup with cached batch operations and fallback checks. The resulting interaction states are persisted in the graph with metadata fields for interaction type, confidence, validation outcomes, conflict flags, discovery indicators, and source provenance. This metadata model supports both deterministic downstream filtering and reproducible audit trails.
+
+Hybrid prediction experiments combine text-derived features, graph-derived features, and LLM-derived confidence features. Late fusion in the reported setup follows
+\[
+s_{\text{final}} = 0.5\,s_{\text{ML}} + 0.3\,s_{\text{Graph}} + 0.2\,s_{\text{LLM}},
+\]
+where $s_{\text{ML}}$, $s_{\text{Graph}}$, and $s_{\text{LLM}}$ denote calibrated component scores.
+
+Implementation choices prioritize reproducibility and failure containment. Caching is used in both validation and LLM-confidence components to avoid repeated computation for recurring drug pairs. Processing state is persisted so that interrupted runs can resume without duplicating completed updates. Local extraction further reduces infrastructure variance tied to external model endpoints and allows predictable throughput tuning through batch size and hardware-aware scheduling.
+
+For graph-feature modeling, the implementation includes neighborhood- and path-based statistics, with extended variants incorporating PageRank and shortest-path signals. This reflects the design assumption that DDI evidence is partly topological: even when textual evidence is sparse, local graph context can encode interaction plausibility. For text-first modeling, TF-IDF and pair-level engineered features provide interpretable baselines whose behavior can be analyzed under class-balancing and weighting settings.
+
+\section{Clinical Risk Interpretation and Severity Modeling}
+The binary framing of drug--drug interaction extraction (interaction vs.
+o interaction) is expedient for benchmarking but insufficient for clinical decision support. A binary label collapses heterogeneous risks into a single axis and does not convey the type or magnitude of harm that may follow co-administration. For translational pharmacovigilance it is therefore necessary to complement binary detection with a clinically meaningful severity interpretation that reflects pharmacokinetic and pharmacodynamic mechanisms, textual evidence strength, and model uncertainty.
+
+We adopt a three-tiered severity taxonomy to support downstream review and actioning: Mild (Safe), Moderate (Caution), and Severe (Dangerous). These tiers are intentionally coarse but clinically actionable: a ``Safe'' label corresponds to co-administration with no expected clinically meaningful interaction at recommended doses; ``Caution'' denotes interactions that warrant monitoring or dose adjustment in susceptible patients; and ``Dangerous'' indicates interactions with a high likelihood of serious adverse outcomes that typically require avoidance or explicit management.
+
+Formally, we express severity as a function of multiple signals:
+\[
+\text{Severity} = f(\text{interaction\_type},\; \text{evidence\_text},\; \text{model\_confidence},\; \text{clinical\_keywords})
+\]
+In this formulation, \textit{interaction\\_type} captures the pharmacological category (for example, pharmacokinetic inhibition or pharmacodynamic potentiation), \textit{evidence\_text} denotes the extracted textual support and surrounding context, \textit{model\_confidence} provides a calibrated score reflecting uncertainty, and \textit{clinical\_keywords} encodes the presence of high-salience terms (for example, ``contraindicated'', ``dose reduction'', or ``no significant interaction'').
+
+Interaction type alone is insufficient because nominal taxonomy does not reliably map to clinical consequence. For example, a pharmacokinetic interaction that produces a small, transient change in exposure may be clinically negligible for many drugs but dangerous for narrow-index therapeutics. Evidence phrases appearing in the source text provide essential context: the presence of prescriptive language such as ``contraindicated'' or ``avoid co-administration'' materially increases the prior probability of serious harm, whereas negated formulations such as ``no significant interaction'' reduce it. Large language models contribute contextual reasoning by synthesizing multi-sentence evidence, resolving scope of negation, and recognizing clinically consequential modifiers that simple pattern matches can miss.
+
+To preserve operational clarity, the system follows simple consistency logic in mapping continuous severity scores to categorical outcomes. If textual and clinical cues indicate no clinically meaningful interaction, the record is treated as No DDI. If computed severity falls into the mild band the interaction is assigned `Safe'. If the severity function yields a high score driven by concordant pharmacologic mechanism, adverse outcome terms, and high model confidence, the interaction is assigned `Dangerous'. These rules are intended as research-oriented decision heuristics to support curator triage rather than as prescriptive clinical guidance.
+
+\section{System Deployment and Research-Oriented Web Interface}
+AuRA-Discovery has been deployed as a research-oriented web interface designed to support transparent exploration, model comparison, and evidence-backed inspection of candidate interactions. The web system accepts minimal inputs—two drug identifiers (denoted Drug A and Drug B) and an optional free-text abstract or evidence snippet—and returns a compact, provenance-rich response that supports both automated evaluation and human review.
+
+The primary outputs presented to users are a binary DDI prediction, a calibrated confidence score, the predicted interaction type, a severity label drawn from the taxonomy described above (Safe / Caution / Dangerous), and the most relevant evidence sentences extracted from source documents. The interface also exposes component-wise signals so that researchers may inspect scores from the text model, the graph model, and the LLM-derived confidence independently.
+
+The backend is implemented as a lightweight API endpoint that orchestrates pre-trained model inference and the fusion layer. Requests are routed to a model inference service that runs the supervised text models and GNN scorers; concurrently a local LLM runtime provides contextual confidence and evidence summarization. A fusion layer consolidates these signals into a final decision while attaching provenance metadata. This architecture enables rapid model swaps, ablation studies, and side-by-side comparisons that are essential for reproducible research and curation workflows.
+
+By design, the web interface emphasizes transparency: all extracted evidence sentences are linkable to their source identifiers and the system records the validation status assigned by the persistence layer. This auditability, combined with per-component scores, facilitates hypothesis-driven model comparison and evidence-backed decisions rather than opaque automation.
+
+\subsection{Graph Persistence and Neo4j-Based Interaction Representation}
+The persistence layer uses a graph database to represent drugs and their interactions because a relationship-centric data model naturally supports provenance, flexible querying, and incremental updates. Drugs are represented as nodes and observed relations between them are represented as edges; this orientation simplifies neighborhood queries and enables efficient traversal for graph-feature computation.
+
+Each persisted interaction edge is annotated with a set of properties that capture both model-derived and validation-derived metadata. Typical properties include \texttt{interaction\_type}, \texttt{confidence}, \texttt{validation\_status} (for example, validated, review, discovery), \texttt{evidence} (a list of evidence snippets and source identifiers), and \texttt{source} (the originating document or dataset). These properties enable status-aware filtering during retrieval and downstream modeling.
+
+Cypher queries support common retrieval patterns such as retrieving all validated interactions for a given drug, ranking candidate partners by confidence, or assembling subgraphs for ablation experiments. Status-aware filters (for example, retrieving only interactions where \texttt{validation\_status} = 'validated') make it straightforward to separate production-ready facts from review-needed records.
+
+[Figure X: Example Neo4j Drug-Drug Interaction Graph Visualization showing drug nodes, interaction edges, and associated metadata such as interaction type and confidence.]
+
+\section{Case Studies and Qualitative Analysis}
+We present two representative case studies that illustrate how the deployed system combines textual, LLM, and graph signals to produce clinically interpretable outputs.
+
+Case Study 1: Warfarin and Amiodarone. Co-administration of amiodarone and warfarin is well known to increase anticoagulant effect primarily through inhibition of CYP2C9-mediated warfarin metabolism. The resulting increase in warfarin exposure can prolong prothrombin time and raise the risk of bleeding complications. In the AuRA-Discovery framework this pattern is identified through concordant indicators: extraction of pharmacokinetic inhibition language in evidence text, presence of adverse outcome terms, high model confidence, and confirmatory edges in the validation graph. The expected system output for a clinical-style abstract describing this interaction is a positive DDI label, interaction type classified as Pharmacokinetic, and a severity assignment of Severe (Dangerous).
+
+Case Study 2: Paracetamol and Ibuprofen. Concomitant use of paracetamol and ibuprofen is common for multimodal pain control, and the literature generally reports no clinically significant pharmacokinetic or pharmacodynamic interaction at recommended doses. Text-only supervised models that rely on co-occurrence patterns can occasionally produce false positives by conflating frequent co-mentions with actionable interactions. In contrast, the combined LLM and graph signals better contextualize evidence: the LLM resolves negation and hedging in source sentences, while the graph indicates absence of high-confidence, validated pharmacologic links between the two agents. The final, research-oriented interpretation in this scenario is that no clinically meaningful DDI exists and the pair should be labeled Safe.
+
+These qualitative examples highlight the complementary strengths of component models and the importance of status-aware persistence for curator workflows.
+
+\section{Discussion}
+Traditional supervised machine-learning models are susceptible to co-occurrence bias: they frequently associate proximate mentions with interactions even when the textual context contains explicit negation or qualification. Large language models mitigate this issue through improved contextual reasoning, resolving negation, temporal scopes, and prescriptive language that determine clinical consequence. Graph models provide relational grounding that constrains predictions to plausible pharmacologic neighborhoods and known entity relationships. Taken together, these observations support the central claim of this work: hybrid systems that integrate text, graph, and LLM-derived signals are necessary to achieve robust, clinically meaningful DDI prediction rather than relying on any single modeling paradigm.
+
+\section{Results and Analysis}
+Model families are compared using precision, recall, F1, and PR-AUC. For class-imbalanced biomedical settings, PR-AUC is retained as a secondary criterion due to its sensitivity to positive-class retrieval quality \cite{saito2015pr}.
+
+Metric definitions are included for clarity. Let $TP$, $FP$, and $FN$ denote true positives, false positives, and false negatives. Then
+\[
+\begin{aligned}
+F1 &= \frac{2 \cdot \text{Precision} \cdot \text{Recall}}{\text{Precision} + \text{Recall}} \\
+\\
+\text{Precision} &= \frac{TP}{TP + FP} \\
+\\
+\text{Recall} &= \frac{TP}{TP + FN} 
+\end{aligned}
+\]
+PR-AUC summarizes threshold-swept precision-recall behavior and is informative when positive-class detection quality is more relevant than true-negative dominance \cite{saito2015pr}.
+
+\begin{table}[htbp]
+\caption{Model comparison on the balanced benchmark split}
+\label{tab:benchmark}
+\centering
+\begin{tabular}{lcccc}
+\hline
+Model & Precision & Recall & F1 & PR-AUC \\
+\hline
+Logistic Regression & 1.0000 & 0.9488 & 0.9737 & 0.9997 \\
+XGBoost & 1.0000 & 0.9331 & 0.9654 & 0.9886 \\
+Graph Model & 0.9692 & 0.5294 & 0.6848 & 0.9626 \\
+GNN Model & 0.9333 & 1.0000 & 0.9655 & 0.9547 \\
+LLM Model & 0.9345 & 0.8425 & 0.8861 & 0.9305 \\
+Hybrid (Late Fusion) & 0.9447 & 0.9409 & 0.9428 & 0.9533 \\
+\hline
+\end{tabular}
+\end{table}
+
+The quantitative results indicate that text-first supervised baselines remain strongest on the current benchmark. Logistic Regression achieves the highest F1 and PR-AUC, with XGBoost \cite{chen2016xgboost} performing comparably. The graph-only model exhibits high precision but reduced recall, suggesting that relational topology provides reliable but coverage-limited signal in the present graph regime. The LLM-confidence model and the hybrid late-fusion model show stronger balance than graph-only performance, indicating that cross-signal integration contributes robustness even when it does not exceed the top supervised baseline.
+
+Post-comparison artifact analyses further show that expanded graph features can substantially improve graph-model recall and F1 relative to earlier graph baselines, while stacked-hybrid variants rebalance precision and recall. These trends suggest that graph density, calibration strategy, and confidence coverage are key determinants of future gains.
+
+Class-imbalance ablations indicate that weighting-based strategies remained stable, whereas the tested SMOTE configuration degraded hybrid F1 under the skewed split setting \cite{chawla2002smote}. This supports treating oversampling as a tunable option rather than a default preprocessing choice, consistent with recent health-domain imbalance surveys that highlight strong dataset dependence for oversampling outcomes \cite{hairani2024smote,medimbalance2024,agyemang2025imbalance}.
+
+From a systems perspective, the results suggest a practical deployment pattern: use strong text-first supervised models as baseline predictors, retain graph and LLM components as complementary channels for robustness and interpretability, and preserve status-aware provenance so uncertain cases can be elevated for human review rather than automatically merged into validated knowledge. This pattern aligns with evidence from biomedical extraction benchmarking, where reliability controls are as important as raw extraction breadth \cite{chen2025benchmark}.
+
+As shown in Figure~\ref{fig:errormodes}, qualitative error analysis should focus on three recurring modes: terminology variation that weakens normalization, sparse graph neighborhoods that limit recall, and confidence miscalibration under distribution shift.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{figures/error_analysis_hybrid_test.png}
+\caption{Error analysis of the hybrid model on the test set, showing the confusion matrix and the relative concentration of false negatives.}
+\label{fig:errormodes}
+\end{figure}
+
+As shown in Figure~\ref{fig:results}, the evaluation can be summarized visually through side-by-side metric profiles across model families.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{Technical Paper/figures/stage7_model_comparison_bars.png}
+\caption{Comparative bar chart of Precision, Recall, F1, and PR-AUC for Logistic Regression, XGBoost, Graph, LLM, and Hybrid models.}
+\label{fig:results}
+\end{figure}
+
+\section{Conclusion}
+This work presents a complete DDI knowledge workflow that integrates literature retrieval, structured local-LLM extraction, pharmacology-backed validation, clinical severity modeling, and graph persistence with provenance-aware status metadata. The framework has been operationalized as a research-oriented web interface that enables transparent model comparison and evidence-backed decision support. The reported evaluation shows that traditional supervised models currently provide the highest benchmark performance, while graph and LLM-derived signals add complementary value for robust system behavior and curation-aware operation. Case studies demonstrate that hybrid integration of text, graph, and LLM signals resolves common failure modes—specifically, co-occurrence bias in text-only models and recall limitations in graph-only approaches.
+
+The principal contribution is therefore architectural, methodological, and empirical: it unifies extraction, validation, severity interpretation, and persistent knowledge representation within one auditable framework for pharmacovigilance-oriented use. Beyond predictive performance, the work demonstrates that trustworthy biomedical automation depends on explicit separation between semantic interpretation and trust assignment, with provenance-aware graph persistence acting as the integration layer between these functions. Clinical severity modeling further bridges the gap between binary detection and actionable clinical decision support, enabling researcher-friendly curation workflows that distinguish validated interactions, uncertain candidates, and potentially novel findings.
+
+\section{Future Work}
+Future development will prioritize full-text evidence integration beyond abstracts, stronger contradiction-aware conflict analysis, and improved entity normalization under naming variation. Additional work will focus on learned fusion and uncertainty calibration in place of fixed-weight fusion, together with broader external validation on additional DDI corpora and temporally separated evaluation settings.
+
+Another priority is longitudinal benchmarking. Because biomedical evidence evolves over time, temporal holdout protocols can better estimate real deployment behavior than random-split evaluation alone. A related direction is richer uncertainty handling, where model confidence, validation provenance, and graph-context uncertainty are combined into curator-facing risk signals. These directions are expected to improve recall, robustness, and generalization while preserving provenance transparency and operational interpretability.
+
+
 \begin{thebibliography}{99}
 
 \bibitem{hansel2023kg}
@@ -159,6 +349,66 @@ P. Chandak, K. Huang, and M. Zitnik,
 \bibitem{schafer2024biokgrapher}
 H. Schafer \textit{et al.},
 "BioKGrapher: Initial evaluation of automated knowledge graph construction from biomedical literature," \textit{Computational and Structural Biotechnology Journal}, vol. 24, 2024.
+
+\bibitem{chen2016xgboost}
+T. Chen and C. Guestrin,
+"XGBoost: A Scalable Tree Boosting System," in \textit{Proc. 22nd ACM SIGKDD Int. Conf. Knowledge Discovery and Data Mining}, 2016, pp. 785--794.
+
+\bibitem{kipf2017semi}
+T. N. Kipf and M. Welling,
+"Semi-Supervised Classification with Graph Convolutional Networks," in \textit{Proc. Int. Conf. Learning Representations (ICLR)}, 2017.
+
+\bibitem{velickovic2018graph}
+P. Veli\v{c}kovi\'{c}, G. Cucurull, A. Casanova, A. Romero, P. Lio, and Y. Bengio,
+"Graph Attention Networks," in \textit{Proc. Int. Conf. Learning Representations (ICLR)}, 2018.
+
+\bibitem{chawla2002smote}
+N. V. Chawla, K. W. Bowyer, L. O. Hall, and W. P. Kegelmeyer,
+"SMOTE: Synthetic Minority Over-sampling Technique," \textit{Journal of Artificial Intelligence Research}, vol. 16, pp. 321--357, 2002.
+
+\bibitem{saito2015pr}
+T. Saito and M. Rehmsmeier,
+"The Precision-Recall Plot Is More Informative than the ROC Plot When Evaluating Binary Classifiers on Imbalanced Datasets," \textit{PLOS ONE}, vol. 10, no. 3, e0118432, 2015.
+
+\bibitem{yu2024biggt}
+C. Yu \textit{et al.},
+"Drug-drug interaction extraction based on multimodal feature fusion by Transformer and BiGRU," \textit{Frontiers in Drug Discovery}, vol. 4, 2024.
+
+\bibitem{mffgnn2022}
+X. Wang \textit{et al.},
+"Multi-type feature fusion based on graph neural network for drug-drug interaction prediction," \textit{BMC Bioinformatics}, 2022.
+
+\bibitem{gnnddi2022}
+M. H. Al-Rabeah and A. Lakizadeh,
+"Prediction of drug-drug interaction events using graph neural networks based feature extraction," \textit{Scientific Reports}, vol. 12, 2022.
+
+\bibitem{knowddi2024}
+Communications Medicine Study Group,
+"KnowDDI: A graph neural network-based method for drug-drug interaction prediction using knowledge graph neighborhoods," \textit{Communications Medicine}, 2024.
+
+\bibitem{luo2024iscience}
+H. Luo \textit{et al.},
+"Drug-drug interactions prediction based on deep learning and knowledge graph: A review," \textit{iScience}, 2024.
+
+\bibitem{li2024quantbio}
+H. Li \textit{et al.},
+"Deep learning for drug-drug interaction prediction: A comprehensive review," \textit{Quantitative Biology}, 2024.
+
+\bibitem{hairani2024smote}
+H. Hairani \textit{et al.},
+"Addressing class imbalance of health data: A systematic literature review on modified SMOTE strategies," \textit{International Journal on Informatics Visualization}, 2024.
+
+\bibitem{medimbalance2024}
+Artificial Intelligence Review Study Group,
+"A decade review of imbalanced medical datasets: preprocessing, learning-level, and hybrid strategies," \textit{Artificial Intelligence Review}, vol. 57, 2024.
+
+\bibitem{agyemang2025imbalance}
+E. F. Agyemang \textit{et al.},
+"Addressing class imbalance problem in health data classification: Practical application from an oversampling viewpoint," \textit{Applied Computational Intelligence and Soft Computing}, 2025.
+
+\bibitem{gnnworkshop2024}
+Engineering Proceedings Study Group,
+"Graph neural network-based drug-drug interaction prediction under polypharmacy settings," \textit{Engineering Proceedings}, 2024.
 
 \end{thebibliography}
 

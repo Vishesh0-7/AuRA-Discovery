@@ -184,6 +184,7 @@ def build_feature_pipeline(
         numeric_scaler=numeric_scaler,
         feature_names=text_feature_names + pair_feature_names + numeric_feature_names,
     )
+    setattr(pipeline, "pair_vectorizer", pair_id_vec)
 
     return x, labels, pipeline
 
@@ -201,14 +202,20 @@ def transform_rows(
 
     x_text = pipeline.tfidf_vectorizer.transform(texts)
     pair_id_dicts = [{"pair_id": _pair_features(row.drug1, row.drug2)["pair_id"]} for row in rows]
-    x_pair_id = pipeline.pair_id_vectorizer.transform(pair_id_dicts)
+    pair_vectorizer = getattr(pipeline, "pair_id_vectorizer", None) or getattr(pipeline, "pair_vectorizer", None)
+    if pair_vectorizer is None:
+        raise AttributeError("FeaturePipeline is missing pair_id_vectorizer/pair_vectorizer")
+    x_pair_id = pair_vectorizer.transform(pair_id_dicts)
 
-    numeric_rows = [_pair_numeric_features(row.drug1, row.drug2) for row in rows]
-    numeric_feature_names = [name for name in numeric_rows[0].keys()] if numeric_rows else []
-    numeric_matrix = np.asarray([[float(values[name]) for name in numeric_feature_names] for values in numeric_rows], dtype=np.float32)
-    x_numeric = pipeline.numeric_scaler.transform(numeric_matrix)
-
-    x = hstack([x_text, x_pair_id, csr_matrix(x_numeric)], format="csr")
+    numeric_scaler = getattr(pipeline, "numeric_scaler", None)
+    if numeric_scaler is not None:
+        numeric_rows = [_pair_numeric_features(row.drug1, row.drug2) for row in rows]
+        numeric_feature_names = [name for name in numeric_rows[0].keys()] if numeric_rows else []
+        numeric_matrix = np.asarray([[float(values[name]) for name in numeric_feature_names] for values in numeric_rows], dtype=np.float32)
+        x_numeric = numeric_scaler.transform(numeric_matrix)
+        x = hstack([x_text, x_pair_id, csr_matrix(x_numeric)], format="csr")
+    else:
+        x = hstack([x_text, x_pair_id], format="csr")
     return x, labels
 
 

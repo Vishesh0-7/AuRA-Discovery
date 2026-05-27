@@ -1,0 +1,29 @@
+TOTAL 28 PARSED 28 ERRORS 0
+01. 1-s2.0-S2001037024003386-main.pdf | Computational and Structural Biotechnology Journal 24 (2024) 639–660 | kw: DDI, knowledge graph, LLM, PubMed
+02. 10916_2023_Article_1951.pdf | Journal of Medical Systems (2023) 47:65 | kw: DDI, knowledge graph, PubMed
+03. 2024.01.12.575305v1.full.pdf | Advance Access Publication Date: Day Month Year | kw: DDI, drug-drug, knowledge graph, ChEMBL, DrugBank
+04. 2283-8247-1-PB.pdf | INTERNATIONAL JOURNAL | kw: DDI, SMOTE
+05. 2404.16130v2.pdf | From Local to Global: A GraphRAG Approach to | kw: DDI, knowledge graph, GraphRAG, LLM
+06. 2501.00309v2.pdf | Retrieval-Augmented Generation with Graphs | kw: DDI, knowledge graph, GraphRAG, LLM
+07. 2501.11632v2.pdf | 2501.11632v2 | kw: knowledge graph, LLM
+08. 29022-Article Text-33076-1-2-20240324.pdf | Exact Policy Recovery in Ofﬂine RL with Both Heavy-Tailed Rewards and Data | kw: n/a
+09. 3777378.pdf | Latest updates: hps://dl.acm.org/doi/10.1145/3777378 | kw: DDI, GraphRAG, LLM
+10. Applied Computational Intelligence and Soft Computing - 2025 - Agyemang - Addressing Class Imbalance Problem in Health Data.pdf | Addressing Class Imbalance Problem in Health Data | kw: DDI, SMOTE
+11. BioGPT.pdf | BioGPT: Generative Pre-trained Transformer for | kw: DDI, drug-drug, PubMed
+12. engproc-107-00042.pdf | Academic Editors: Debopriyo Roy, | kw: DDI, DrugBank
+13. Expert Systems - 2023 - Machado - Drug drug interaction extraction‐based system  An natural language processing approach.pdf | Drug–drug interaction extraction-based system: An natural | kw: DDI, DrugBank
+14. fddsv-04-1460672.pdf | Drug–drug interaction extraction | kw: DDI, knowledge graph, DrugBank
+15. gkad1004.pdf | Nucleic Acids Research , 2024, 52 , D1180–D1192 | kw: DDI, ChEMBL
+16. gkae235.pdf | Nucleic Acids Research , 2024, 52 , W540–W546 | kw: DDI, BioNLP, PubMed
+17. gkx1037.pdf | D1074–D1082 NucleicAcidsResearch,2018,Vol.46,Databaseissue Publishedonline8November2017 | kw: DDI, drug-drug, DrugBank
+18. High-throughput BioMed Relation.pdf | High-throughput Biomedical Relation Extraction for | kw: DDI, LLM
+19. journal.pcbi.1011989.pdf | SubGE-DDI: A new prediction model for drug- | kw: DDI, drug-drug, knowledge graph, PubMed, DrugBank
+20. ooaf058.pdf | Research and Applications | kw: DDI, LLM, BioNLP
+21. PIIS2589004224003699.pdf | Drug-drug interactions prediction based on deep | kw: DDI, drug-drug, knowledge graph, DrugBank
+22. Quant  Biol - 2024 - Li - Deep learning for drug‐drug interaction prediction  A comprehensive review.pdf | Deep learning for drug ‐ drug interaction prediction: A | kw: DDI, knowledge graph, XGBoost
+23. s10462-024-10884-2.pdf | Artificial Intelligence Review (2024) 57:273 | kw: DDI
+24. s12859-022-04763-2.pdf | Multi‑type feature fusion based on graph | kw: DDI, drug-drug, knowledge graph
+25. s41467-025-56989-2.pdf | Article https://doi.org/10.1038/s41467-025-56989-2 | kw: DDI, LLM, BioNLP, PubMed
+26. s41597-023-01960-3.pdf | 1Scientific Data | (2023) 10:67 | https://doi.org/10.1038/s41597-023-01960-3 | kw: DDI, knowledge graph, DrugBank
+27. s41598-022-19999-4.pdf | Vol.:(0123456789)Scientific Reports | (2022) 12:15590 | https://doi.org/10.1038/s41598-022-19999-4 | kw: DDI, drug-drug, knowledge graph, XGBoost
+28. s43856-024-00486-y.pdf | communications medicine Article | kw: DDI, drug-drug, knowledge graph, DrugBank

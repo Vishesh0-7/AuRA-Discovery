@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AuRA-Discovery Model Lab</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <main class="shell">
+    <section class="hero card">
+      <div>
+        <p class="eyebrow">AuRA-Discovery</p>
+        <h1>Research-grade DDI inference from pre-trained models.</h1>
+        <p class="lede">Runs deterministic inference over saved Logistic Regression, XGBoost, TF-IDF pair champion, Neo4j graph model, Graph GNN, and structured LLM outputs with hybrid fusion.</p>
+      </div>
+      <div class="hero-stats">
+        <div class="stat">
+          <span class="stat-label">Models loaded</span>
+          <strong>6</strong>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Abstract required</span>
+          <strong>No</strong>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Graph source</span>
+          <strong>Saved artifacts</strong>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <form class="card form-card" method="post">
+        <h2>Drug Pair Input</h2>
+        <p class="muted">Abstract is optional. If you omit it, text-dependent models will still run with an empty-text fallback.</p>
+
+        {% if error %}
+        <div class="alert">{{ error }}</div>
+        {% endif %}
+
+        <label>
+          <span>Drug 1</span>
+          <input type="text" name="drug1" value="{{ drug1 }}" placeholder="e.g. warfarin" required>
+        </label>
+
+        <label>
+          <span>Drug 2</span>
+          <input type="text" name="drug2" value="{{ drug2 }}" placeholder="e.g. aspirin" required>
+        </label>
+
+        <label>
+          <span>Abstract <span class="optional">optional</span></span>
+          <textarea name="abstract" rows="9" placeholder="Paste a PubMed abstract or leave blank.">{{ abstract }}</textarea>
+        </label>
+
+        <button type="submit">Run All Saved Models</button>
+      </form>
+
+      <aside class="card side-card">
+        <h2>Inference stack</h2>
+        <ul class="model-list">
+          <li>Logistic Regression</li>
+          <li>XGBoost</li>
+          <li>TF-IDF + Pair Champion</li>
+          <li>Graph-based Neo4j XGBoost</li>
+          <li>Graph GNN (GraphSAGE)</li>
+          <li>LLM Structured Predictor</li>
+        </ul>
+        <div class="hint">
+          Final output is Hybrid Fusion over available model probabilities. No model training is performed at runtime.
+        </div>
+      </aside>
+    </section>
+
+    {% if report %}
+    <section class="card final-card">
+      <div class="final-grid">
+        <div>
+          <p class="eyebrow">Clinical Risk Level</p>
+          <h2>{{ report.severity_label }}</h2>
+          <p class="lede">{{ drug1 }} vs {{ drug2 }}</p>
+        </div>
+        <div class="summary-chips">
+          <div class="chip">
+            <span>Confidence</span>
+            <strong>{{ "%.1f"|format(report.confidence * 100) }}%</strong>
+          </div>
+          <div class="chip">
+            <span>Final Decision</span>
+            <strong>{{ report.final_prediction }}</strong>
+          </div>
+          <div class="chip severity {{ report.severity_label|lower }}">
+            <span>Risk Badge</span>
+            <strong>{{ report.severity_label }}</strong>
+          </div>
+        </div>
+      </div>
+      <p class="muted final-meta">{{ report.model_agreement }} · Model used: {{ report.model_used }} · Severity class: {{ report.severity }}</p>
+      <p class="interpr-text">{{ report.clinical_interpretation }}</p>
+    </section>
+
+    <section class="card results-card">
+      <div class="results-head">
+        <div>
+          <h2>Model Outputs</h2>
+          <p class="muted">{{ result_count }} model rows returned for {{ drug1 }} vs {{ drug2 }}.</p>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th>Prediction</th>
+              <th>Confidence</th>
+              <th>Interaction Type</th>
+              <th>Severity</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in results %}
+            <tr>
+              <td>
+                <div class="model-name">{{ row.model }}</div>
+              </td>
+              <td>
+                <span class="pill {{ row.prediction_class }}">{{ row.prediction }}</span>
+              </td>
+              <td>
+                {% if row.confidence is not none %}
+                  <div class="confidence-cell">
+                    <div>{{ row.confidence_label }}</div>
+                    <div class="meter"><span style="width: {{ row.confidence_pct }}%"></span></div>
+                  </div>
+                {% else %}
+                  <span class="muted">n/a</span>
+                {% endif %}
+              </td>
+              <td>{{ row.interaction_type }}</td>
+              <td><span class="pill severity-pill {{ row.severity_class }}">{{ row.severity_label }}</span></td>
+              <td class="notes">{{ row.notes }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card evidence-card">
+      <div class="results-head">
+        <div>
+          <h2>Abstract Evidence</h2>
+          <p class="muted">Top supporting sentences with highlighted risk phrases.</p>
+        </div>
+      </div>
+      {% if report.evidence %}
+      <ul class="evidence-list">
+        {% for sentence in report.evidence %}
+        <li>{{ sentence|safe }}</li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="muted">No evidence extracted. Provide an abstract to enable evidence extraction.</p>
+      {% endif %}
+    </section>
+    {% endif %}
+  </main>
+</body>
+</html>

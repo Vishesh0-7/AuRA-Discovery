@@ -127,6 +127,7 @@ def run_stage7_full_evaluation() -> Dict[str, Any]:
     baseline = _read_json(Path("artifacts/metrics/baseline_metrics.json"))
     no_smote = _read_json(Path("reports/hybrid_metrics_nosmote.json"))
     smote = _read_json(Path("reports/hybrid_metrics_smote.json"))
+    gnn_path = Path("artifacts/metrics/graph_gnn_metrics.json")
 
     graph_champion_name = str(graph["champion"]["model_name"])
     graph_test = graph["models"][graph_champion_name]["test"]
@@ -149,6 +150,23 @@ def run_stage7_full_evaluation() -> Dict[str, Any]:
         _metric_row("LLM Model", stage6["late_fusion"]["components"]["llm"], "LLM-confidence model"),
         _metric_row(hybrid_name, hybrid_metrics, "TF-IDF + Graph + LLM"),
     ]
+
+    if gnn_path.exists():
+        gnn = _read_json(gnn_path)
+        gnn_test = gnn["model"]["test"]
+        rows.insert(
+            3,
+            _metric_row(
+                "Graph GNN (GraphSAGE)",
+                {
+                    "precision": float(gnn_test["precision"]),
+                    "recall": float(gnn_test["recall"]),
+                    "f1": float(gnn_test["f1"]),
+                    "pr_auc": float(gnn_test["pr_auc"]),
+                },
+                "train-only message passing edges",
+            ),
+        )
 
     best_model = max(rows, key=lambda row: (row["f1"], row["pr_auc"]))
 
