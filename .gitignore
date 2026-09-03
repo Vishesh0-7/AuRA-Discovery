@@ -6,7 +6,10 @@
 
 # Data directory - contains raw and processed data
 data/
+!data/
+!data/processed/
 *.csv
+!data/processed/ddi_dataset.csv
 *.json
 *.parquet
 *.db
