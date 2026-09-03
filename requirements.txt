@@ -20,6 +20,7 @@ python-dotenv>=1.0.1
 # HTTP requests
 requests>=2.31.0
 flask>=3.0.0
+gunicorn>=21.2.0
 
 # ML feature engineering
 scikit-learn>=1.4.0
